@@ -30,3 +30,10 @@
 *.exe
 *.out
 *.app
+
+# Build folder 
+build
+
+# KDevelop project files
+*.kdev4
+.kdev4
