@@ -22,6 +22,8 @@
 // My own propagation algorithm
 #include "MyPropagationAlgorithm.hpp"
 
+SurfaceLogger::storage_t SurfaceLogger::storage;
+
 int main(int argc, char **argv) 
 {
     GenericDetector detector;
@@ -102,5 +104,11 @@ int main(int argc, char **argv)
     },
     bFieldVar);
     
-    sequencer.run();
+    auto sequencer_exit_code = sequencer.run();
+    
+    std::fstream("data.csv") output_file;
+                      
+    output_file << SurfaceLogger::storage.data();
+    
+    return sequencer_exit_code;
 }
