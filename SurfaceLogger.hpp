@@ -60,6 +60,8 @@ struct SurfaceLogger
             return;
         
         auto &current_surface_id = state.navigation.currentSurface->geometryId();
+        auto targetSurface = state.navigation.targetSurface;
+        using OptId = std::optional<Acts::GeometryIdentifier>;
         
         if( result.edges.empty() )
         {
@@ -67,17 +69,17 @@ struct SurfaceLogger
                 stepper.position(state.stepping),
                 stepper.direction(state.stepping),
                 current_surface_id,
-                std::nullopt
+                targetSurface ? OptId(targetSurface->geometryId()) : OptId(std::nullopt)
             });
         }
         else
         {
             auto &last_edge = result.edges.back();
+            
+            last_edge.end_id = targetSurface ? OptId(targetSurface->geometryId()) : OptId(std::nullopt);
                 
-            if( current_surface_id != last_edge.start_id )
+            if( state.navigation.targetReached == true )
             {               
-                last_edge.end_id = current_surface_id;
-                
                 result.edges.push_back(edge_info_t{
                     stepper.position(state.stepping),
                     stepper.direction(state.stepping),
@@ -100,17 +102,24 @@ struct SurfaceLogger
 
 std::ostream &operator<<(std::ostream &os, const std::vector<std::vector<SurfaceLogger::edge_info_t>> &data)
 {
-    std::cout << "start_id,end_id,dir_x,dir_y,dir_z,pos_x,pos_y,pos_z" << std::endl;
+    os << "start_id,end_id,dir_x,dir_y,dir_z,pos_x,pos_y,pos_z\n";
+    
     for( const auto &track : SurfaceLogger::storage.data() )
+    {
         for( const auto &e : track )
-            std::cout << e.start_id.value() << ","
-                      << e.end_id->value() << ","
-                      << e.start_dir(0) << ","
-                      << e.start_dir(1) << ","
-                      << e.start_dir(2) << ","
-                      << e.start_pos(0) << ","
-                      << e.start_pos(1) << ","
-                      << e.start_pos(2) << "\n";
+        {
+            os << e.start_id.value() << ","
+               << e.end_id->value() << ","
+               << e.start_dir(0) << ","
+               << e.start_dir(1) << ","
+               << e.start_dir(2) << ","
+               << e.start_pos(0) << ","
+               << e.start_pos(1) << ","
+               << e.start_pos(2) << std::endl;
+        }
+    }
+    
+    return os;
 }
 
 #endif // SURFACELOGGER_HPP_INCLUDED

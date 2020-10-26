@@ -106,9 +106,10 @@ int main(int argc, char **argv)
     
     auto sequencer_exit_code = sequencer.run();
     
-    std::fstream("data.csv") output_file;
+    
+    std::fstream output_file("data.csv", std::fstream::out | std::fstream::trunc);
                       
-    output_file << SurfaceLogger::storage.data();
+    std::cout << SurfaceLogger::storage.data();
     
     return sequencer_exit_code;
 }

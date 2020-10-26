@@ -30,13 +30,13 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND (${GCC} OR ${CLANG}) )
     add_link_options("-fsanitize=address,leak,undefined")
 endif()    
 
-# Executable
+# Executables
 add_executable(logging_actor main.cpp)
+add_executable(geo_id_decoder geo_id_decoder.cpp)
 
 # Boost
 find_package(Boost 1.69 MODULE REQUIRED COMPONENTS program_options)
 target_link_libraries(logging_actor Boost::program_options)
-
 
 # Setup Acts
 set(ACTS_ROOT /home/benjamin/Dokumente/acts_project/acts)
@@ -67,4 +67,6 @@ set_target_properties(ActsExamplesDetectorGeneric PROPERTIES IMPORTED_LOCATION $
 add_library(ActsExamplesMagneticField SHARED IMPORTED)
 set_target_properties(ActsExamplesMagneticField PROPERTIES IMPORTED_LOCATION ${ACTS_BINARY_DIR}/lib64/libActsExamplesMagneticField.so)
 
+# Link
 target_link_libraries(logging_actor ActsCore ActsExamplesCommon ActsExamplesFramework ActsExamplesDetectorGeneric ActsExamplesMagneticField)
+target_link_libraries(geo_id_decoder ActsCore)
