@@ -109,7 +109,7 @@ int main(int argc, char **argv)
     
     std::fstream output_file("data.csv", std::fstream::out | std::fstream::trunc);
                       
-    std::cout << SurfaceLogger::storage.data();
+    output_file << SurfaceLogger::storage.data();
     
     return sequencer_exit_code;
 }

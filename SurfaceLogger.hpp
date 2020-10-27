@@ -15,8 +15,8 @@ struct SurfaceLogger
     {
         Acts::Vector3D start_pos;
         Acts::Vector3D start_dir;
-        Acts::GeometryIdentifier start_id;
-        std::optional<Acts::GeometryIdentifier> end_id;
+        std::pair<Acts::GeometryIdentifier,Acts::Vector3D> start_surface;
+        std::optional<std::pair<Acts::GeometryIdentifier,Acts::Vector3D>> end_surface;
     };
     
     static class storage_t
@@ -46,7 +46,7 @@ struct SurfaceLogger
         
         ~result_type()
         {
-            if( static_cast<int>(edges.back().end_id->value()) == 0 )
+            if( static_cast<int>(edges.back().end_surface->first.value()) == 0 )
                 edges.pop_back();
             
             storage.thread_safe_push_back( std::move(edges) );
@@ -56,40 +56,41 @@ struct SurfaceLogger
     template <typename propagator_state_t, typename stepper_t>
     void operator()(propagator_state_t& state, const stepper_t& stepper, result_type& result) const 
     {
-        if( state.navigation.currentSurface == nullptr || state.navigation.currentSurface->geometryId().value() == 0 )
+        if( state.navigation.currentSurface == nullptr )
             return;
         
-        auto &current_surface_id = state.navigation.currentSurface->geometryId();
-        auto targetSurface = state.navigation.targetSurface;
-        using OptId = std::optional<Acts::GeometryIdentifier>;
+        const auto &surface = state.navigation.currentSurface;
         
-        if( result.edges.empty() )
+        if( result.edges.empty() || result.edges.back().end_surface.has_value() )
         {
-            result.edges.push_back(edge_info_t{
-                stepper.position(state.stepping),
-                stepper.direction(state.stepping),
-                current_surface_id,
-                targetSurface ? OptId(targetSurface->geometryId()) : OptId(std::nullopt)
-            });
-        }
-        else
-        {
-            auto &last_edge = result.edges.back();
-            
-            last_edge.end_id = targetSurface ? OptId(targetSurface->geometryId()) : OptId(std::nullopt);
-                
-            if( state.navigation.targetReached == true )
-            {               
+            // Only store surfaces with position != (0,0,0) TODO How handle first surface?
+//             if( surface->center(state.geoContext.get()) != Acts::Vector3D::Zero() )
                 result.edges.push_back(edge_info_t{
                     stepper.position(state.stepping),
                     stepper.direction(state.stepping),
-                    current_surface_id,
+                    {surface->geometryId(),surface->center(state.geoContext.get())},
                     std::nullopt
                 });
-                
-                return;
-            }
+            
+            return;
         }
+
+        auto &last_edge = result.edges.back();
+        
+        if( state.navigation.navigationBreak )
+        {
+            // If navigation terminates and there is a unfinished edge
+            if( !last_edge.end_surface.has_value() )
+                result.edges.pop_back();
+            
+            return;
+        }
+        
+        
+        // If the new surface is different from the old one, set end of edge
+        if( !last_edge.end_surface.has_value() && surface->geometryId() != last_edge.start_surface.first )
+//             if( surface->center(state.geoContext.get()) != Acts::Vector3D::Zero() )
+                last_edge.end_surface = {surface->geometryId(),surface->center(state.geoContext.get())};
     }
 
     // Not used
@@ -102,20 +103,26 @@ struct SurfaceLogger
 
 std::ostream &operator<<(std::ostream &os, const std::vector<std::vector<SurfaceLogger::edge_info_t>> &data)
 {
-    os << "start_id,end_id,dir_x,dir_y,dir_z,pos_x,pos_y,pos_z\n";
+    os << "start_id,start_x,start_y,start_z,end_id,end_x,end_y,end_z,pos_x,pos_y,pos_z,dir_x,dir_y,dir_z\n";
     
-    for( const auto &track : SurfaceLogger::storage.data() )
+    for( const auto &track : data )
     {
         for( const auto &e : track )
         {
-            os << e.start_id.value() << ","
-               << e.end_id->value() << ","
-               << e.start_dir(0) << ","
-               << e.start_dir(1) << ","
-               << e.start_dir(2) << ","
+            os << e.start_surface.first.value() << ","
+               << e.start_surface.second(0) << ","
+               << e.start_surface.second(1) << ","
+               << e.start_surface.second(2) << ","
+               << e.end_surface->first.value() << ","
+               << e.end_surface->second(0) << ","
+               << e.end_surface->second(1) << ","
+               << e.end_surface->second(2) << ","
                << e.start_pos(0) << ","
                << e.start_pos(1) << ","
-               << e.start_pos(2) << std::endl;
+               << e.start_pos(2) << ","
+               << e.start_dir(0) << ","
+               << e.start_dir(1) << ","
+               << e.start_dir(2) << std::endl;
         }
     }
     

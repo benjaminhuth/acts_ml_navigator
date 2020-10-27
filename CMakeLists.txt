@@ -41,6 +41,9 @@ target_link_libraries(logging_actor Boost::program_options)
 # Setup Acts
 set(ACTS_ROOT /home/benjamin/Dokumente/acts_project/acts)
 set(ACTS_BINARY_DIR ${ACTS_ROOT}/build)
+ 
+find_package (Eigen3 3.3 REQUIRED NO_MODULE)
+target_link_libraries(logging_actor Eigen3::Eigen)
 
 include_directories(SYSTEM
     ${ACTS_ROOT}/Core/include
