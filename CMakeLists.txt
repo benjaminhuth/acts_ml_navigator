@@ -28,22 +28,16 @@ endif()
 if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND (${GCC} OR ${CLANG}) )
     add_compile_options("-fsanitize=address,leak,undefined")
     add_link_options("-fsanitize=address,leak,undefined")
-endif()    
-
-# Executables
-add_executable(logging_actor main.cpp)
-add_executable(geo_id_decoder geo_id_decoder.cpp)
+endif()
 
 # Boost
 find_package(Boost 1.69 MODULE REQUIRED COMPONENTS program_options)
-target_link_libraries(logging_actor Boost::program_options)
 
-# Setup Acts
+# Acts
 set(ACTS_ROOT /home/benjamin/Dokumente/acts_project/acts)
 set(ACTS_BINARY_DIR ${ACTS_ROOT}/build)
  
 find_package (Eigen3 3.3 REQUIRED NO_MODULE)
-target_link_libraries(logging_actor Eigen3::Eigen)
 
 include_directories(SYSTEM
     ${ACTS_ROOT}/Core/include
@@ -70,6 +64,7 @@ set_target_properties(ActsExamplesDetectorGeneric PROPERTIES IMPORTED_LOCATION $
 add_library(ActsExamplesMagneticField SHARED IMPORTED)
 set_target_properties(ActsExamplesMagneticField PROPERTIES IMPORTED_LOCATION ${ACTS_BINARY_DIR}/lib64/libActsExamplesMagneticField.so)
 
-# Link
-target_link_libraries(logging_actor ActsCore ActsExamplesCommon ActsExamplesFramework ActsExamplesDetectorGeneric ActsExamplesMagneticField)
-target_link_libraries(geo_id_decoder ActsCore)
+# subdirectories
+add_subdirectory(logger)
+add_subdirectory(utilities/geo_id_decoder)
+add_subdirectory(utilities/volume_name_extractor)

@@ -1,0 +1,5 @@
+add_executable(volume_name_extractor volume_name_extractor.cpp)
+
+target_link_libraries(volume_name_extractor Boost::program_options)
+target_link_libraries(volume_name_extractor Eigen3::Eigen)
+target_link_libraries(volume_name_extractor ActsCore ActsExamplesCommon ActsExamplesDetectorGeneric)

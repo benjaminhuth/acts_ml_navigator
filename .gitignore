@@ -37,3 +37,10 @@ build
 # KDevelop project files
 *.kdev4
 .kdev4
+
+# Python
+__pycache__
+
+# Data
+data/embeddings/
+data/logger/
