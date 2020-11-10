@@ -1,121 +1,75 @@
 import os
-import csv
+import sys
+import logging
+logging.basicConfig(format='[%(levelname)s] %(asctime)s: %(message)s',level=logging.INFO)
+
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
-from mpl_toolkits.mplot3d import Axes3D
+import plotly.express as px
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 import tensorflow as tf
 
-from sklearn.manifold import MDS
+from sklearn.manifold import TSNE
 from sklearn.preprocessing import StandardScaler
 
 from utility.data_import import get_sorted_model_dirs
 
 
-def main():
+def main(argv):
     # Sort model subdirs by accuracy
-    model_dirs = get_sorted_model_dirs('../data/embeddings/')
+    #model_dir = '../data/embeddings/' + get_sorted_model_dirs('../data/embeddings/')[0]
+    model_dir = '../data/embeddings/20201110-164143-emb10-acc99'
 
-    # Load best model
-    model = tf.keras.models.load_model('../data/embeddings/' + model_dirs[0], compile=False)
-    print("loaded './embeddings/" + model_dirs[-1] + "'")
+    # Load model
+    model = tf.keras.models.load_model(model_dir, compile=False)
+    logging.info("loaded model from '%s'",model_dir)
     
-    # Load geoid to name encoding
-    geoid_name_dict = {}
-    
-    with open('../build/utilities/volume_name_extractor/volume_names.csv','r') as csvfile:
-        reader = csv.reader(csvfile)
-        next(reader) # header
-        for row in reader:
-            # dict[geoid] = name
-            geoid_name_dict[ int(row[0]) ] = row[1]
-            
-
     # Load node number to geoid encoding
-    number_geoid_dict = {}
-
-    with open('./embeddings/' + model_dirs[-1] + '-nodes.csv','r') as csvfile:
-        reader = csv.reader(csvfile)
-        for row in reader:
-            # dict[number] = geoid
-            number_geoid_dict[ int(row[1]) ] = int(row[0])
-            
-    # Get nodes of different detector parts
-    beamline = []
-    pixel = []
-    sstrip = []
-    lstrip = []
+    data = pd.read_csv('../data/detector/detector_surfaces.csv', dtype={'geo_id': np.uint64})
     
-    for n in range(len(number_geoid_dict)):
-        geoid = number_geoid_dict[n]
-        
-        try:
-            name = geoid_name_dict[geoid]
-            
-            if "Beamline" in name:
-                beamline.append(n)
-            elif "Pixel" in name:
-                pixel.append(n)
-            elif "SStrip" in name:
-                sstrip.append(n)
-            elif "LStrip" in name:
-                lstrip.append(n)
-        except:
-            continue
-            
-    num_skipped = len(number_geoid_dict) - (len(beamline) + len(pixel) + len(sstrip) + len(lstrip))
-    print("num of skipped geoids:",num_skipped)
+    # Color mapping
+    color_map = {
+        'Beamline':                 '#ffcc00',      # yellow
+        'Pixel::NegativeEndcap':    '#000099',      # dark blue
+        'Pixel::Barrel':            '#0000ff',      # bright blue
+        'Pixel::PositiveEndcap':    '#000099',      # dark blue
+        'SStrip::NegativeEndcap':   '#800000',      # dark red
+        'SStrip::Barrel':           '#ff0000',      # bright red
+        'SStrip::PositiveEndcap':   '#800000',      # dark red
+        'LStrip::NegativeEndcap':   '#006600',      # dark green
+        'LStrip::Barrel':           '#00cc00',      # bright green
+        'LStrip::PositiveEndcap':   '#006600',      # dark green
+    }
     
-    # Get embedding of all nodes
-    node_numbers = np.array(beamline + pixel + sstrip + lstrip)
-    print("node_numbers.shape:",node_numbers.shape)
-    
-    node_embeddings = model(node_numbers)
-    node_embeddings = np.reshape(node_embeddings,newshape=(node_embeddings.shape[0],node_embeddings.shape[2]))
-    print("node_embeddings.shape:",node_embeddings.shape)
-
+    # Compute embedding
+    numbers = data['ordinal_id'].to_numpy()
+    embeddings = np.squeeze(model(numbers))
     scaler = StandardScaler()
-    node_embeddings = scaler.fit_transform(node_embeddings)
+    embeddings = scaler.fit_transform(embeddings)
+    logging.info("Computed embeddings, shape: %s",embeddings.shape)
 
-    # Apply MDS
-    reduced_dims = 2
-    mds = MDS(reduced_dims,n_init=1,max_iter=100)
-
-    print("start MDS",flush=True)
-
-    embeddings_reduced = mds.fit_transform(node_embeddings)
-    print("embeddings_reduced.shape:",embeddings_reduced.shape)
+    # Apply TSNE
+    reduced_dimension = 3
+    logging.info("Start TSNE dimension reduction (%d -> %d)",embeddings.shape[1],reduced_dimension)
+    embeddings_reduced = TSNE(n_components=reduced_dimension,n_jobs=20).fit_transform(embeddings)
+    logging.info("Done, shape of reduced embeddings: %s",embeddings_reduced.shape)
     
-    # Reconstruct different detector parts
-    start = 0
-    end = len(beamline)
-    beamline = embeddings_reduced[start:end]
+    assert reduced_dimension == 2 or reduced_dimension == 3
     
-    start = end
-    end += len(pixel)
-    pixel = embeddings_reduced[start:end]
+    data['x'] = embeddings_reduced[:,0]
+    data['y'] = embeddings_reduced[:,1]
+        
+    if reduced_dimension == 2:
+        fig = px.scatter(data, x='x', y='y', color='volume', color_discrete_sequence=list(color_map.values()))
+        fig.show()
     
-    start = end
-    end += len(sstrip)
-    sstrip = embeddings_reduced[start:end]
-    
-    start = end
-    end += len(lstrip)
-    lstrip = embeddings_reduced[start:end]
-    
-    # Plot the things
-    #fig = plt.figure()
-    #ax = fig.add_subplot(111, projection='3d')
-    
-    plt.scatter(beamline[:,0],beamline[:,1],c='y')
-    plt.scatter(pixel[:,0],pixel[:,1],c='b')
-    plt.scatter(sstrip[:,0],sstrip[:,1],c='r')
-    plt.scatter(lstrip[:,0],lstrip[:,1],c='g')
-    
-    plt.show()
-    
+    elif reduced_dimension == 3:
+        data['z'] = embeddings_reduced[:,2]
+        fig = px.scatter_3d(data, x='x', y='y', z='z', color='volume', color_discrete_sequence=list(color_map.values()))
+        fig.show()
     
     
 if __name__ == "__main__":
-    main()
+    main(sys.argv)

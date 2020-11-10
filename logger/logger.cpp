@@ -52,8 +52,6 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
     
-    const std::string outputDir = vm["output-dir"].template as<std::string>();
-    
     ActsExamples::Sequencer sequencer(ActsExamples::Options::readSequencerConfig(vm));
     
     auto logLevel = ActsExamples::Options::readLogLevel(vm);
@@ -138,6 +136,7 @@ int main(int argc, char **argv)
     auto filename = std::string("data-") + std::string(datestring) + std::string(".csv");
     
     // output file
+    const std::string outputDir = vm["output-dir"].template as<std::string>();
     std::fstream output_file(outputDir + filename, std::fstream::out | std::fstream::trunc);
                       
     output_file << SurfaceLogger::storage.data();

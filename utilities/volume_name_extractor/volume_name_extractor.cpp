@@ -42,15 +42,16 @@ int main(int argc, char ** argv)
                 table.push_back(std::make_pair(surface->geometryId().value(), tvolume->volumeName()));
     });
     
-    std::fstream output_file("volume_names.csv", std::fstream::out | std::fstream::trunc);
+    // Output
+    std::fstream output_file("detector_surfaces.csv", std::fstream::out | std::fstream::trunc);
     
     to_ostream(output_file, table);
 }
 
 void to_ostream(std::ostream& os, const geoid_name_table_t &table)
 {
-    os << "geo_id,name\n";
+    os << "ordinal_id,geo_id,volume\n";
     
-    for(const auto &entry : table)
-        os << entry.first << "," << entry.second << "\n";
+    for(std::size_t i=0; i<table.size(); ++i)
+        os << i << "," << table[i].first << "," << table[i].second << "\n";
 }

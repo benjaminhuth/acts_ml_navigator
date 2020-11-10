@@ -25,7 +25,7 @@ def main(argv):
     logging.info("loaded model from '" + embedding_prefix + model_dirs[0] + "'")
     
     embedding_shape = embedding_encoder(0).shape
-    logging.info("embedding shape: %s",str(embedding_shape))
+    logging.info("embedding shape: %s",embedding_shape)
     
     # Load ordinal numbers to geoid dictionary
     all_geoids = get_list_of_all_geoids("../data/event000000000-detectors.csv")
@@ -73,9 +73,9 @@ def main(argv):
     y_train = np.reshape(y_train,newshape=(y_train.shape[0],y_train.shape[2]))
     
     logging.info("built training data")    
-    logging.debug("x_train_ids.shape: %s",str(x_train_ids.shape))
-    logging.debug("x_train_dirs.shape: %s",str(x_train_dirs.shape))
-    logging.debug("y_train.shape: %s",str(y_train.shape))    
+    logging.debug("x_train_ids.shape: %s",x_train_ids.shape)
+    logging.debug("x_train_dirs.shape: %s",x_train_dirs.shape)
+    logging.debug("y_train.shape: %s",y_train.shape)    
     
     def build_navigation_model(embedding_dim,hidden_layers,learning_rate):
         assert len(hidden_layers) >= 1
