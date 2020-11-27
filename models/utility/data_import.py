@@ -13,7 +13,7 @@ def get_sorted_model_dirs(base_dir):
     return np.flip(model_dirs[idxs])
 
 
-def generate_graph_from_data(filename, export_dir=False):
+def generate_graph_from_data(filename, return_pos_and_dir=False):
     '''
     returns nodes, edges, weights
     '''
@@ -26,12 +26,16 @@ def generate_graph_from_data(filename, export_dir=False):
     # transform doublets in edges to weights
     edges, idxs, weights = np.unique(edges,axis=0,return_index=True, return_counts=True)
     
-    if export_dir:
+    if return_pos_and_dir:
         dirs = graph_data[['dir_x','dir_y','dir_z']].to_numpy()
         dirs = dirs[idxs]
-        assert len(dirs) == len(edges)
         
-        return nodes, edges, weights, dirs
+        poss = graph_data[['pos_x','pos_y','pos_z']].to_numpy()
+        poss = poss[idxs]
+        
+        assert len(dirs) == len(edges) == len(poss)
+        
+        return nodes, edges, weights, poss, dirs
         
     
     return nodes, edges, weights

@@ -1,13 +1,13 @@
 #!/bin/bash
 
-if [[ -z "$1" ]]; then
-    echo "Usage: $0 <num_of_events>"
+if [[ -z "$1" || -z "$2" ]]; then
+    echo "Usage: $0 <num_of_events> <output_dir>"
     exit 0
 fi
 
 N=0
 MAX_JOBS=20
-ODIR="../../data/logger/"
+ODIR="$2"
 
 while true; do
     let N=N+1

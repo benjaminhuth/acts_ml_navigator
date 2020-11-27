@@ -2,6 +2,7 @@
 #define SURFACELOGGER_HPP_INCLUDED
 
 #include <vector>
+#include <set>
 #include <optional>
 #include <iostream>
 #include <mutex>
@@ -16,6 +17,7 @@ struct SurfaceLogger
     {
         Acts::Vector3D start_pos;
         Acts::Vector3D start_dir;
+        double start_qop;
         std::pair<Acts::GeometryIdentifier,Acts::Vector3D> start_surface;
         std::optional<std::pair<Acts::GeometryIdentifier,Acts::Vector3D>> end_surface;
     };
@@ -69,9 +71,6 @@ struct SurfaceLogger
         
         const auto &surface = state.navigation.currentSurface;
         
-        if( surface->geometryId() == 1ull )
-            std::cout << "hit the 1" << std::endl;
-        
         if( result.edges.empty() || result.edges.back().end_surface.has_value() )
         {
             // only add sensitive surfaces or beam pipe
@@ -79,6 +78,7 @@ struct SurfaceLogger
                 result.edges.push_back(edge_info_t{
                     stepper.position(state.stepping),
                     stepper.direction(state.stepping),
+                    stepper.charge(state.stepping)/stepper.momentum(state.stepping),
                     {surface->geometryId(),surface->center(state.geoContext.get())},
                     std::nullopt
                 });
@@ -99,6 +99,7 @@ struct SurfaceLogger
                 result.edges.push_back(edge_info_t{
                     stepper.position(state.stepping),
                     stepper.direction(state.stepping),
+                    stepper.charge(state.stepping)/stepper.momentum(state.stepping),
                     {surface->geometryId(),surface->center(state.geoContext.get())},
                     std::nullopt
                 });
@@ -115,7 +116,7 @@ struct SurfaceLogger
 
 std::ostream &operator<<(std::ostream &os, const std::vector<std::vector<SurfaceLogger::edge_info_t>> &data)
 {
-    os << "start_id,start_x,start_y,start_z,end_id,end_x,end_y,end_z,pos_x,pos_y,pos_z,dir_x,dir_y,dir_z\n";
+    os << "start_id,start_x,start_y,start_z,end_id,end_x,end_y,end_z,pos_x,pos_y,pos_z,dir_x,dir_y,dir_z,qop\n";
     
     for( const auto &track : data )
     {
@@ -134,7 +135,8 @@ std::ostream &operator<<(std::ostream &os, const std::vector<std::vector<Surface
                << e.start_pos(2) << ","
                << e.start_dir(0) << ","
                << e.start_dir(1) << ","
-               << e.start_dir(2) << std::endl;
+               << e.start_dir(2) << ","
+               << e.start_qop << std::endl;
         }
     }
     

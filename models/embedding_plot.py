@@ -20,7 +20,7 @@ from utility.data_import import get_sorted_model_dirs
 def main(argv):
     # Sort model subdirs by accuracy
     #model_dir = '../data/embeddings/' + get_sorted_model_dirs('../data/embeddings/')[0]
-    model_dir = '../data/embeddings/20201110-164143-emb10-acc99'
+    model_dir = '../data/embeddings/20201126-163733-emb50-acc40-dot'
 
     # Load model
     model = tf.keras.models.load_model(model_dir, compile=False)

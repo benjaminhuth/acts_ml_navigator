@@ -52,7 +52,8 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
     
-    ActsExamples::Sequencer sequencer(ActsExamples::Options::readSequencerConfig(vm));
+    const auto sequencer_config = ActsExamples::Options::readSequencerConfig(vm);
+    ActsExamples::Sequencer sequencer(sequencer_config);
     
     auto logLevel = ActsExamples::Options::readLogLevel(vm);
 
@@ -127,13 +128,15 @@ int main(int argc, char **argv)
     sequencer_exit_code = sequencer.run();
     
     // Generate filename
-    char datestring[20];
+    char date_str[20];
     
     auto time = std::time(nullptr);
     auto tm = std::localtime(&time);
-    std::strftime(datestring,sizeof(datestring),"%y%m%d-%H%M%S",tm);
+    std::strftime( date_str,sizeof( date_str ),"%y%m%d-%H%M%S",tm);
     
-    auto filename = std::string("data-") + std::string(datestring) + std::string(".csv");
+    auto event_str = "-n" + std::to_string(sequencer_config.events);
+    
+    std::string filename = "data-" + std::string(date_str) + event_str + ".csv";
     
     // output file
     const std::string outputDir = vm["output-dir"].template as<std::string>();
