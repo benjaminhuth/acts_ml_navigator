@@ -1,8 +1,12 @@
 cmake_minimum_required(VERSION 3.0)
+cmake_policy(SET CMP0057 NEW)
+
+# Module path
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 # Project settings
 project(logging_actor CXX)
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # Compiler checks
@@ -34,13 +38,13 @@ endif()
 find_package(Boost 1.69 MODULE REQUIRED COMPONENTS program_options)
 
 # Acts
+find_package(Acts REQUIRED COMPONENTS Core PluginOnnx)
+
+# Acts Examples
 set(ACTS_ROOT /home/benjamin/Dokumente/acts_project/acts)
 set(ACTS_BINARY_DIR ${ACTS_ROOT}/build)
- 
-find_package (Eigen3 3.3 REQUIRED NO_MODULE)
 
 include_directories(SYSTEM
-    ${ACTS_ROOT}/Core/include
     ${ACTS_ROOT}/Examples/Framework/include
     ${ACTS_ROOT}/Examples/Detectors/Common/include
     ${ACTS_ROOT}/Examples/Detectors/GenericDetector/include
@@ -49,22 +53,25 @@ include_directories(SYSTEM
     ${ACTS_ROOT}/Examples/Algorithms/Propagation/include
 )
 
-add_library(ActsCore SHARED IMPORTED)
-set_target_properties(ActsCore PROPERTIES IMPORTED_LOCATION ${ACTS_BINARY_DIR}/lib64/libActsCore.so)
-
 add_library(ActsExamplesCommon SHARED IMPORTED)
+add_dependencies(ActsExamplesCommon ActsCore)
 set_target_properties(ActsExamplesCommon PROPERTIES IMPORTED_LOCATION ${ACTS_BINARY_DIR}/lib64/libActsExamplesCommon.so)
 
 add_library(ActsExamplesFramework SHARED IMPORTED)
+add_dependencies(ActsExamplesFramework ActsCore)
 set_target_properties(ActsExamplesFramework PROPERTIES IMPORTED_LOCATION ${ACTS_BINARY_DIR}/lib64/libActsExamplesFramework.so)
 
 add_library(ActsExamplesDetectorGeneric SHARED IMPORTED)
+add_dependencies(ActsExamplesDetectorGeneric ActsCore)
 set_target_properties(ActsExamplesDetectorGeneric PROPERTIES IMPORTED_LOCATION ${ACTS_BINARY_DIR}/lib64/libActsExamplesDetectorGeneric.so)
 
 add_library(ActsExamplesMagneticField SHARED IMPORTED)
+add_dependencies(ActsExamplesMagneticField ActsCore)
 set_target_properties(ActsExamplesMagneticField PROPERTIES IMPORTED_LOCATION ${ACTS_BINARY_DIR}/lib64/libActsExamplesMagneticField.so)
 
 # subdirectories
 add_subdirectory(logger)
 add_subdirectory(utilities/geo_id_decoder)
 add_subdirectory(utilities/volume_name_extractor)
+add_subdirectory(utilities/kd_tree)
+add_subdirectory(navigator)

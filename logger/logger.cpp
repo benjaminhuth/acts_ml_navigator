@@ -29,6 +29,8 @@
 decltype(SurfaceLogger::storage) SurfaceLogger::storage;
 decltype(SurfaceLogger::valid_geoids) SurfaceLogger::valid_geoids;
 
+
+
 int main(int argc, char **argv) 
 {
     GenericDetector detector;

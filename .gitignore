@@ -44,3 +44,6 @@ __pycache__
 # Data
 data/embeddings/
 data/logger/
+
+# Acts
+timing.tsv

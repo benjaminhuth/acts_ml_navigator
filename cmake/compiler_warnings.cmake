@@ -37,6 +37,7 @@ set(CLANG_WARNINGS
     -Wnull-dereference      # warn if a null dereference is detected
     -Wdouble-promotion      # warn if float is implicit promoted to double
     -Wformat=2              # warn on security issues around functions that format output (ie printf)
+    -Wno-format-y2k
 )
 
 set(GCC_WARNINGS

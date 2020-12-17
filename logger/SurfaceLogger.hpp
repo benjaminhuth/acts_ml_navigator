@@ -7,34 +7,28 @@
 #include <iostream>
 #include <mutex>
 
-#include <Acts/Utilities/Definitions.hpp>
+#include <Acts/Definitions/Algebra.hpp>
 #include <Acts/Geometry/GeometryIdentifier.hpp>
+
+Acts::Vector3 last_pos;
 
 struct SurfaceLogger
 {
     /// Struct that holds all infos that are captured by the logger
     struct edge_info_t
     {
-        Acts::Vector3D start_pos;
-        Acts::Vector3D start_dir;
+        Acts::Vector3 start_pos;
+        Acts::Vector3 start_dir;
         double start_qop;
-        std::pair<Acts::GeometryIdentifier,Acts::Vector3D> start_surface;
-        std::optional<std::pair<Acts::GeometryIdentifier,Acts::Vector3D>> end_surface;
+        std::pair<Acts::GeometryIdentifier,Acts::Vector3> start_surface;
+        std::optional<std::pair<Acts::GeometryIdentifier,Acts::Vector3>> end_surface;
     };
     
-    /// The result type. On destruction it adds the collected data to a static
-    /// class
+    /// The result type
     struct result_type 
     {
+        bool is_already_exported = false;
         std::vector<edge_info_t> edges;
-        
-        ~result_type()
-        {
-            if( !edges.back().end_surface.has_value() )
-                edges.pop_back();
-            
-            storage.thread_safe_push_back( std::move(edges) );
-        }
     };
     
     /// Static class that holds all collected results. Allows thread save push_back.
@@ -66,6 +60,15 @@ struct SurfaceLogger
     template <typename propagator_state_t, typename stepper_t>
     void operator()(propagator_state_t& state, const stepper_t& stepper, result_type& result) const 
     {
+        if( state.navigation.navigationBreak && !result.is_already_exported )
+        {
+            if( !result.edges.back().end_surface.has_value() )
+                result.edges.pop_back();
+            
+            storage.thread_safe_push_back( std::move(result.edges) );
+            result.is_already_exported = true;
+        }
+        
         if( state.navigation.currentSurface == nullptr )
             return;
         
