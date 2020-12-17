@@ -1,6 +1,8 @@
 import os
 import sys
 import datetime
+import argparse
+import pprint
 import logging
 logging.basicConfig(format='[%(levelname)s] %(asctime)s: %(message)s',level=logging.INFO)
 
@@ -16,20 +18,29 @@ tf.get_logger().setLevel('ERROR')
 import matplotlib.pyplot as plt
 from utility.data_import import *
 
-def main(argv):
+
+
+def build_and_run_embedding_model(training_data_file, detector_data_file, output_dir, embedding_dim, learning_rate, batch_size, epochs):
     logging.info("tensorflow devices: %s",[ t for n, t in tf.config.list_physical_devices() ])
     
     ######################
     # PREPARE GRAPH DATA #
     ######################
+        
+    graph_data = pd.read_csv(training_data_file, dtype={'start_id': np.uint64, 'end_id': np.uint64})
+
+    edges = graph_data[["start_id","end_id"]].to_numpy()
     
-    nodes, geoid_edges, weights = generate_graph_from_data("../data/logger/embedding_training/data-201104-120629.csv")
+    nodes = np.unique(edges.flatten())
+
+    # transform doublets in edges to weights
+    geoid_edges, weights = np.unique(edges, axis=0, return_counts=True)
     
     logging.info("num nodes: %s",len(nodes))
     logging.info("num edges: %s",len(geoid_edges))
     
     # Get all valid nodes
-    detector_data = pd.read_csv("../data/detector/detector_surfaces.csv", dtype={'geo_id': np.uint64})
+    detector_data = pd.read_csv(detector_data_file, dtype={'geo_id': np.uint64})
     all_geo_ids = detector_data['geo_id'].to_numpy()
     all_numbers = detector_data['ordinal_id'].to_numpy()
     logging.info("detector coverage ratio: %s",len(nodes)/len(all_geo_ids))
@@ -102,7 +113,7 @@ def main(argv):
     # LEARN EMBEDDING #
     ###################    
     
-    def build_model(num_categories,embedding_dim,learning_rate,network_arch):
+    def build_model(num_categories,embedding_dim,learning_rate):
         input_node_1 = tf.keras.Input(1)
         input_node_2 = tf.keras.Input(1)
         
@@ -111,19 +122,8 @@ def main(argv):
         x = embedding_layer(input_node_1)
         y = embedding_layer(input_node_2)
         
-        if network_arch == "dot":
-            z = tf.keras.layers.Dot(axes=2,normalize=True)([x,y])
-            z = tf.keras.layers.Reshape(target_shape=(1,))(z)
-        elif network_arch == "dense":
-            x = tf.keras.layers.Reshape(target_shape=(embedding_dim,))(x)
-            y = tf.keras.layers.Reshape(target_shape=(embedding_dim,))(y)
-            z = tf.keras.layers.Concatenate()([x,y])
-            z = tf.keras.layers.Dense(50)(z)
-            z = tf.keras.layers.Activation(tf.nn.relu)(z)
-        elif network_arch == "euclidean":
-            z = tf.keras.layers.Lambda(lambda x: tf.math.exp(-tf.norm(x[0]-x[1],axis=1)))([x,y])
-        else:
-            raise
+        z = tf.keras.layers.Dot(axes=2,normalize=True)([x,y])
+        z = tf.keras.layers.Reshape(target_shape=(1,))(z)
             
         z = tf.keras.layers.Dense(1)(z)
         output = tf.keras.layers.Activation(tf.nn.sigmoid)(z)
@@ -142,21 +142,19 @@ def main(argv):
 
     model_params = {
         'num_categories': len(all_geo_ids),
-        'embedding_dim': 50,
-        'learning_rate': 0.01,
-        'network_arch': 'dot'
+        'embedding_dim': embedding_dim,
+        'learning_rate': learning_rate
     }
     
     logging.info("Start learning embedding")
     
-    batch_size = 8192
     gen = generate_batch(batch_size)
     
     train_embedding_model = build_model(**model_params)
     history = train_embedding_model.fit(
         x=gen, 
         steps_per_epoch=2*len(connected_edges)//batch_size,
-        epochs=20000,
+        epochs=epochs,
         verbose=2
     )
     
@@ -169,12 +167,47 @@ def main(argv):
     date_string = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     embedding_string = "-emb" + str(model_params['embedding_dim'])
     accuracy_string = "-acc" + str(round(history.history['accuracy'][-1]*100))
-    method_string = "-" + model_params['network_arch']
-    output_filename = "../data/embeddings/" + date_string + embedding_string + accuracy_string + method_string
+    output_filename = date_string + embedding_string + accuracy_string
         
-    embedding_model.save(output_filename)
-    logging.info("exported model to '" + output_filename + "'")
+    embedding_model.save(output_dir + output_filename)
+    logging.info("exported model to '" + output_dir + output_filename + "'")
     
     
 if __name__ == "__main__":
-    main(sys.argv)
+    root_dir = "/home/benjamin/Dokumente/acts_project/ml_navigator/data/"
+    
+    params = {
+        'training_data_file': root_dir + "logger/embedding_training/data-201104-120629.csv",
+        'detector_data_file': root_dir + "detector/detector_surfaces.csv",
+        'output_dir': root_dir + "models/embeddings/",
+        'embedding_dim': 50,
+        'learning_rate': 0.01,
+        'batch_size': 8192,
+        'epochs': 20000
+    }    
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-d", "--embedding_dim", type=int, help="the dimension of the generated embedding")  
+    parser.add_argument("-e", "--epochs", type=int, help="epochs the simulation is running")
+    parser.add_argument("-l", "--learning_rate", type=float, help="the learning rate")
+    
+    args = parser.parse_args()
+    
+    if args.learning_rate:
+        params['learning_rate'] = args.learning_rate
+    
+    if args.embedding_dim:
+        params['embedding_dim'] = args.embedding_dim
+        
+    if args.epochs:
+        params['epochs'] = args.epochs
+            
+    assert params['embedding_dim'] > 0
+    assert params['epochs'] > 0
+    assert params['learning_rate'] > 0.0
+    
+    
+    logging.info("run with the following params:")
+    pprint.pprint(params, width=1)
+    
+    build_and_run_embedding_model(**params)
