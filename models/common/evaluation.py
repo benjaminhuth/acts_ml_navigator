@@ -1,15 +1,16 @@
 import os
 import sys
-sys.path.append("..")
+import time
 
 import numpy as np
+import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 import tensorflow as tf
 
-from common.plotting import *
+
 
 def get_colors():
     '''
@@ -26,10 +27,50 @@ def get_colors():
 
 
 
+def autolabel(ax, rects):
+    """
+    From: https://matplotlib.org/3.2.1/gallery/lines_bars_and_markers/barchart.html
+    
+    Attach a text label above each bar in *rects*, displaying its height.
+    """
+    for rect in rects:
+        height = rect.get_height()
+        ax.annotate('{:.2f}'.format(height),
+                    xy=(rect.get_x() + rect.get_width() / 2, height),
+                    xytext=(0, 3),  # 3 points vertical offset
+                    textcoords="offset points",
+                    ha='center', va='bottom')
+        
+ 
+ 
+def print_progress_bar(iteration, total, prefix = '', suffix = '', decimals = 1, length = 100, fill = '█', printEnd = "\r"):
+    """
+    From: https://stackoverflow.com/questions/3173320/text-progress-bar-in-the-console
+    
+    Call in a loop to create terminal progress bar
+    @params:
+        iteration   - Required  : current iteration (Int)
+        total       - Required  : total iterations (Int)
+        prefix      - Optional  : prefix string (Str)
+        suffix      - Optional  : suffix string (Str)
+        decimals    - Optional  : positive number of decimals in percent complete (Int)
+        length      - Optional  : character length of bar (Int)
+        fill        - Optional  : bar fill character (Str)
+        printEnd    - Optional  : end character (e.g. "\r", "\r\n") (Str)
+    """
+    percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
+    filledLength = int(length * iteration // total)
+    bar = fill * filledLength + '-' * (length - filledLength)
+    print(f'\r{prefix} |{bar}| {percent}% {suffix}', end = printEnd)
+    # Print New Line on Complete
+    if iteration == total: 
+        print()
+
+
+
 ##################################
 # Detailed neighborhood analysis #
 ##################################
-
 
 def next_neighbor_accuracy(y_true, y_pred, nn):
     '''
@@ -75,48 +116,6 @@ def neighbor_accuracy_detailed(y_true,y_pred, nn):
     bad = len(y_true) - (in1 + in2 + in3 + in5 + in10)
     
     return np.array([in1, in2, in3, in5, in10, bad]) / len(y_true)
-
-
-class NeighborDistributionCallback(tf.keras.callbacks.Callback):
-    '''
-    Callback class, which invokes neighbor_accuracy_detailed(...) after each epoch
-    '''
-    def __init__(self, x, y, neighbor_index, sample_rate=10, do_print=True):
-        self.nn = neighbor_index
-        self.x = x
-        self.y = y
-        self.sample_rate = sample_rate
-        self.do_print = do_print
-    
-    def compute_accuray(self):
-        y_pred = self.model.predict(self.x)
-        return neighbor_accuracy_detailed(self.y, y_pred, self.nn)
-    
-    def on_train_begin(self, logs=None):
-        self.results = []
-        self.log_epochs = []
-        
-    def print_accuracy(self, acc):
-        print("neigbor acc - in1: {:.2f} - in2: {:.2f} - in3 {:.2f} - in5 {:.2f} - in10 {:.2f} - other {:.1f}".format(*acc), flush=True)
-        
-    def on_epoch_end(self, epoch, logs=None): 
-        if epoch % self.sample_rate == 0:
-            acc = self.compute_accuray()
-            self.results.append(acc)
-            self.log_epochs.append(epoch)
-
-            if self.do_print:
-                self.print_accuracy()
-        
-    def on_train_end(self, logs=None):
-        acc = self.compute_accuray()
-        self.results.append(acc)
-        self.log_epochs.append(self.params['epochs']-1)
-            
-        if self.do_print:
-            self.print_accuracy()
-        
-        self.model.history.history['neighbor_accuracy_detailed'] = (self.log_epochs, np.asarray(self.results))
         
         
 
@@ -157,47 +156,17 @@ def plot_detailed_neighbour_accuracy(log_epochs, neighbor_history):
 # Track position based evaluation #
 ###################################
 
-def make_evaluation_plot(y_true, y_pred, nn, track_lengths, history):
+def compute_pos_list(track_lengths, num_edges):
     '''
-    Returns (fig, axes)
+    returns an array, containing integers which represent the position in the track of the ith element
     '''
-    assert np.sum(track_lengths) == len(y_pred)
+    assert np.sum(track_lengths) == num_edges
     
-    idxs_1st = np.array([ np.sum(track_lengths[0:i]) for i in range(len(track_lengths)) ])
-    idxs_2nd = idxs_1st + 1
-    idxs_last = np.roll(idxs_1st - 1, -1)
-        
-    results_1st = neighbor_accuracy_detailed(y_true[idxs_1st], y_pred[idxs_1st],nn)
-    results_last = neighbor_accuracy_detailed(y_true[idxs_last], y_pred[idxs_last],nn)
-    results_all = neighbor_accuracy_detailed(y_true, y_pred,nn)
-    
-    results = [results_all, results_1st, results_last]
-    titles = ["All connections", "1st edge of track", "Last edge of track"]
-    
-    fig, axes = plt.subplots(nrows=2, ncols=3)
-    fig.set_figheight(9)
-    fig.set_figwidth(12)
-    
-    colors = get_colors()
-    
-    for ax, result, title in zip(axes[0,:], results, titles):
-        
-        for i, res in enumerate(result):
-            rects = ax.bar(i,res,color=colors[-(i+1)])
-            autolabel(ax, rects)
-        
-        ax.set_title(title)
-        ax.set_ylim([0.0,1.1])
-        ax.set_xticks([0,1,2,3,4,5])
-        ax.set_xticklabels(["1","2","3","5","10","other"])
-    
-    
-    # find out which index corresponds to what "position in track"
     pos_list = []
     pos_in_track = 0
     n_track = 0
     
-    for i in range(len(y_true)):
+    for i in range(num_edges):
         if pos_in_track == track_lengths[n_track]:
             pos_in_track = 0
             n_track += 1
@@ -205,31 +174,146 @@ def make_evaluation_plot(y_true, y_pred, nn, track_lengths, history):
         pos_list.append(pos_in_track)
         pos_in_track += 1
     
-    pos_list = np.array(pos_list)
+    return np.array(pos_list)
+
+
+
+def make_evaluation_plots(tracks_edges_start, tracks_edges_target, tracks_params, history, evaluate_edge, figsize=(16,10)):
+    '''
+    Function that makes a collection of plots for evaluation of a model
     
-    # Compute position wise accuracy
-    best_1 = []
+    Parameters:
+    * tracks_edges: a list of ndarrays with shape [track_length,2]
+    * tracks_params: a list of ndarrays with shape [track_length,selected_params]
+    * history: a history dictionary (must contain the key 'loss' and 'val_loss')
+    * evaluate_edge: a callable to invoke to evaluate a specific edge
+    * figsize: a tuple (width,height) in inches (?) for the figure
     
-    for i in range(np.max(track_lengths)):
-        mask = np.equal(pos_list, i)
-        best_1.append(next_neighbor_accuracy(y_true[mask], y_pred[mask], nn)) 
+    Returns:
+    * matploglib figure
+    * axes array (containing 3x2 subplots)
+    * score (ratio of overall 'in1' predictions)
+    '''
     
+    ##############
+    # Evaluation #
+    ##############
     
-    axes[1,0].set_title("Accuracy per track-position")
-    axes[1,0].plot(best_1,color=colors[-1],linewidth=2.0)
-    axes[1,0].set_ylim([0.0,1.1])
+    max_track_length = max([ len(track) for track in tracks_edges_start ])
     
-    # Plot training history
-    axes[1,1].set_title("Training history")
-    axes[1,1].plot(history.history["loss"])
-    axes[1,1].plot(history.history["val_loss"])
-    #axes[1,1].set_yscale('log')
-    axes[1,1].legend(["train loss", "validation loss"])
-    #axes[1,1].minorticks_off()
-    #axes[1,1].yaxis.set_major_locator(ticker.LogLocator(base=10, numticks=5))
-    #axes[1,1].yaxis.set_major_formatter(ticker.FuncFormatter(lambda y, _: '{:g}'.format(y)))
+    score_matrix = pd.DataFrame(data = np.zeros((max_track_length, 8)),
+                                    index=np.arange(max_track_length),
+                                    columns=['in1','in2','in3','in5','in10','other','relative_score','num_edges'])
     
-    # Turn off last square
-    axes[1, 2].axis('off')
+    times = []
+        
+    if 'TERM' in os.environ:
+        print_progress_bar(0, len(tracks_edges_start))
     
-    return fig, axes
+    for i, (starts, targets, params) in enumerate(zip(tracks_edges_start, tracks_edges_target, tracks_params)):  
+                
+        t0 = time.time()
+        
+        for pos_in_track, (start, target, param) in enumerate(zip(starts, targets, params)):
+            score_matrix = evaluate_edge(pos_in_track, start, target, param, score_matrix)
+            
+        t1 = time.time()
+        
+        times.append(t1 - t0)
+        remaining = np.mean(np.array(times)) * (len(tracks_edges_start)-i)
+        remaining_str = time.strftime("%Hh:%Mm:%Ss", time.gmtime(remaining))
+            
+        if not 'TERM' in os.environ:
+            progress = 100*i/len(tracks_edges_start)
+            print("Progress: {:.1f}% - estimated time remaining: {}".format(progress, remaining_str), flush=True)
+        else:
+            print_progress_bar(i+1, len(tracks_edges_start),
+                               "Progress: ", "- estimated time remaining: {}".format(remaining_str))  
+    
+    # Normalize
+    hits_per_pos = np.sum(score_matrix[['in1','in2','in3','in5','in10','other']].values, axis=1)
+    total_num_edges = np.sum(score_matrix[['in1','in2','in3','in5','in10','other']].values.flatten())
+    
+    assert hits_per_pos.all() > 0
+    assert total_num_edges > 0
+    
+    score_matrix['relative_score'] = score_matrix['relative_score'].to_numpy() / hits_per_pos
+    score_matrix['num_edges'] = score_matrix['num_edges'].to_numpy() / hits_per_pos
+    
+    ############
+    # Plotting #
+    ############
+    
+    fig, ax = plt.subplots(nrows=2, ncols=3, figsize=figsize)
+    
+    # Plot loss
+    ax[0,0].set_xlabel("epochs")
+    ax[0,0].set_ylabel("loss")
+    ax[0,0].set_title("Loss")
+    if 'loss' in history and 'val_loss' in history:
+        ax[0,0].plot(history['loss'])
+        ax[0,0].plot(history['val_loss'])
+        ax[0,0].legend(["train loss", "validation loss"])
+    else:
+        ax[0,0].text(0.2,0.5,"no loss to plot")
+    
+    # Plot accuracy
+    ax[0,1].set_xlabel("epochs")
+    ax[0,1].set_ylabel("accuracy")
+    ax[0,1].set_title("Accuracy")
+    if 'accuracy' in history and 'val_accuracy' in history:
+        ax[0,1].plot(history['accuracy'])
+        ax[0,1].plot(history['val_accuracy'])
+        ax[0,1].legend(["train accuracy", "validation accuracy"])
+    else:
+        ax[0,1].text(0.2,0.5,"no accuracy to plot")
+    
+    # Plot absolute distribution (in total)    
+    for i, (name, series) in enumerate(score_matrix[['in1','in2','in3','in5','in10','other']].iteritems()):
+        res = np.sum(series.to_numpy())
+        norm_res = res / total_num_edges
+        rects = ax[0,2].bar(i,norm_res,color=get_colors()[-(i+1)])
+        autolabel(ax[0,2], rects)
+        
+    ax[0,2].set_title("Score (all edges)")
+    ax[0,2].set_xlabel("score bins")
+    ax[0,2].set_ylabel("absolute score")
+    ax[0,2].set_ylim([0,1])
+    ax[0,2].legend(score_matrix.columns.tolist())
+    
+    # Plot distribution per track pos
+    current = np.zeros(max_track_length)
+    for i, (name, series) in enumerate(score_matrix[['in1','in2','in3','in5','in10','other']].iteritems()):
+        # dont plot 'other'
+        if i == len(score_matrix.columns)-3:
+            break
+        
+        current += series.to_numpy() / hits_per_pos
+        ax[1,0].plot(current, color=get_colors()[-(i+1)])
+        
+    ax[1,0].set_title("Score (per track position)")
+    ax[1,0].set_xlabel("track position")
+    ax[1,0].set_ylabel("score")
+    ax[1,0].set_ylim([0,1.1])
+    ax[1,0].legend(score_matrix.columns.tolist()[:-1])
+        
+    # Plot relative score
+    ax[1,1].set_title("Relative score (per track position)")
+    ax[1,1].set_xlabel("track position")
+    ax[1,1].set_ylabel("relative score (w.r.t. # edges)")
+    ax[1,1].set_ylim([0,1.1])
+    if not score_matrix['relative_score'].to_numpy().all() == 0:
+        ax[1,1].plot(score_matrix['relative_score'].to_numpy())
+    else:
+        ax[1,1].text(0.2,0.5,"no relative_score to plot")
+    
+    # Plot possible edges per track pos
+    ax[1,2].set_title("Mean graph edges per track position")
+    ax[1,2].set_xlabel("track position")
+    ax[1,2].set_ylabel("mean #edges")
+    if not score_matrix['num_edges'].to_numpy().all() == 0:
+        ax[1,2].plot(score_matrix['num_edges'].to_numpy())
+    else:
+        ax[1,2].text(0.2,0.5,"no relative_score to plot")
+    
+    return fig, ax, float(np.sum(score_matrix['in1'].to_numpy())/total_num_edges)
