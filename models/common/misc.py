@@ -55,7 +55,7 @@ def init_options_and_logger(propagation_dir, output_dir, additional_options={}, 
     Init general options and the logger. Also reads options from command line.
     
     Parameters:
-    * propagation_dir: directory to propagation data, usually config.get_navigation_training_dir()
+    * propagation_dir: directory to propagation data, usually config.get_navigation_training_dir(). If set to 'None', it is ignored.
     * output_dir: where to store the results
     * [OPT] additional_options (dictionary): User specified options
     * [OPT] log_level
@@ -80,14 +80,15 @@ def init_options_and_logger(propagation_dir, output_dir, additional_options={}, 
     options = parse_args_from_dictionary(options)
     
     # Resolve 'propagation_file' from 'prop_data_size'
-    assert os.path.exists(propagation_dir)
-    propagation_files = extract_propagation_data(propagation_dir)
-    
-    if options['prop_data_size'] in propagation_files:
-        options['propagation_file'] = propagation_files[ options['prop_data_size'] ]
-    else:
-        logging.error("Could not find a propagation dataset with %d Acts events", options['prop_data_size'])
-        exit(1)
+    if propagation_dir != None:
+        assert os.path.exists(propagation_dir)
+        propagation_files = extract_propagation_data(propagation_dir)
+        
+        if options['prop_data_size'] in propagation_files:
+            options['propagation_file'] = propagation_files[ options['prop_data_size'] ]
+        else:
+            logging.error("Could not find a propagation dataset with %d Acts events", options['prop_data_size'])
+            exit(1)
     
     # Print configuration
     pprint.pprint(options, width=2)
@@ -180,19 +181,34 @@ def cantor_pairing(array):
 
 
 class RemainingTimeEstimator(tf.keras.callbacks.Callback):
+    '''
+    Keras callback which evaluates the remaining time by averaging over all previous epoch durations
+    '''
     def __init__(self, num_epochs):
-        self.times = []
-        self.num_epochs = num_epochs
+        self.times = np.zeros(num_epochs)
        
     def on_epoch_begin(self, epoch, logs=None):
         self.t0 = time.time()
         
     def on_epoch_end(self, epoch, logs=None):
         t1 = time.time()
-        self.times.append(t1-self.t0)
+        self.times[epoch] = t1 - self.t0
         
-        remaining = np.mean(np.array(self.times)) * (self.num_epochs - epoch)
+        remaining = np.mean(self.times[0:epoch+1]) * (len(self.times) - epoch)
         print("Estimate of remaining time: {}".format(time.strftime("%Hh:%Mm:%Ss", time.gmtime(remaining))))
         
         
 
+def nn_index_matches_embedding_model(embedding_model, nn, num_tests=10):
+    '''
+    Test if the nn index gives the correct indices for a embedding model
+    '''
+    
+    assert nn.n_samples_fit_ == embedding_model.get_layer(index=1).get_config()['input_dim']
+    
+    ref_ids = np.random.randint(0, nn.n_samples_fit_, num_tests)
+    embs = np.squeeze(embedding_model(ref_ids))
+    
+    test_ids = np.squeeze(nn.kneighbors(embs, 1, return_distance=False))
+    
+    return np.array_equal(test_ids, ref_ids)

@@ -7,8 +7,6 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-#os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
-os.environ['OMP_NUM_THREADS'] = '12'  # does this speed things up?
 import tensorflow as tf
 
 from sklearn.neighbors import NearestNeighbors
@@ -20,18 +18,19 @@ from common.misc import *
 from common.plot_embedding import *
 from common.pairwise_score_tools import *
 
-###############
-# Build model #
-###############
-    
-def build_model(num_categories, embedding_dim, layers, activations, learning_rate):
+
+
+###################
+# Build the model #
+###################
+
+def build_model(embedding_dim, layers, activations, learning_rate):
     '''
     Function that builds and compiles the model. It is of form:
     
-    [start_id, target_id, start_params] -> [0,1]
+    [start_emb, target_emb, start_params] -> [0,1]
     
     Parameters:
-    * num_categories (int): how many ids for the embedding layer
     * embedding_dim (int)
     * layers (list): list of layer sizes
     * activations (list): list of activations
@@ -40,21 +39,11 @@ def build_model(num_categories, embedding_dim, layers, activations, learning_rat
     Returns:
     * compiled Keras model
     '''
-    input_node_1 = tf.keras.Input(1)
-    input_node_2 = tf.keras.Input(1)
-    input_params = tf.keras.Input(4)
+    start_emb = tf.keras.Input(embedding_dim)
+    target_emb = tf.keras.Input(embedding_dim)
+    track_params = tf.keras.Input(4)
     
-    embedding_layer = tf.keras.layers.Embedding(num_categories,embedding_dim)
-    
-    a = embedding_layer(input_node_1)
-    a = tf.keras.layers.Reshape((embedding_dim,))(a)
-    
-    b = embedding_layer(input_node_2)
-    b = tf.keras.layers.Reshape((embedding_dim,))(b)
-    
-    c = tf.keras.layers.Dense(embedding_dim)(input_params)
-    
-    d = tf.keras.layers.Concatenate()([ a, b, c ])
+    d = tf.keras.layers.Concatenate()([ start_emb, target_emb, track_params ])
     
     d = tf.keras.layers.Dense(layers[0],activation=activations[0])(d)
     
@@ -63,50 +52,40 @@ def build_model(num_categories, embedding_dim, layers, activations, learning_rat
         
     output = tf.keras.layers.Dense(1, activation="sigmoid")(d)
     
-    model = tf.keras.Model(inputs=[input_node_1,input_node_2,input_params],outputs=[output])
+    model = tf.keras.Model(inputs=[start_emb,target_emb,track_params],outputs=[output])
     
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate), 
         loss=tf.keras.losses.BinaryCrossentropy(),
         metrics=[tf.keras.metrics.Accuracy(), tf.keras.metrics.BinaryAccuracy()],
-        #run_eagerly=True
+        run_eagerly=True
     )
     
     return model
-   
 
-    
-def evaluate_edge(pos, start, target, param, score_matrix, nav_model, graph_edge_map):
-    '''
-    Function which evaluates all metrics for a single edge in a track.
-    
-    Parameters:
-    * pos: the position in the track (int)
-    * start: a id representing the start surface
-    * target: a id representing the target surface
-    * param: the track parameters at the start (i.e. direction and qop)
-    * score_matrix: a pandas df to fill in the results
-    * nav_model: the navigation model to predict the score of a tuple [start_surface, end_surface, params]
-    * graph_edge_map: a dictionary { start: namedtuple( targets, weights ) }
-    
-    Returns:
-    * modified score_matrix (pandas dataframe)
+
+
+def evaluate_edge(pos, start_emb, target_emb, x_params, score_matrix, graph_edge_map, nn, nav_model, emb_model):
     '''
     
-    targets = graph_edge_map[ start ].targets
+    '''    
+    start_id = int(np.squeeze(nn.kneighbors(start_emb.reshape(1,-1), 1, return_distance=False)))
+    target_ids = graph_edge_map[ start_id ].targets
+    target_embs = np.squeeze(emb_model(target_ids))
+    assert target_emb in target_embs
         
     # Broadcast input values to arrays for vectorized inference
-    starts = np.full(len(targets), start )
-    params = np.full((len(targets),len(param)), param)
+    starts = np.full(len(target_ids), start_emb )
+    params = np.full((len(target_ids),len(x_params)), x_params)
     
-    scores = np.squeeze(nav_model([starts, targets, params]))
+    scores = np.squeeze(nav_model([starts, target_embs, params]))
     score_idxs = np.flip(np.argsort(scores))
     
     # Sort targets by predicted score
-    targets = targets[score_idxs]
+    target_embs = target_embs[score_idxs]
     
     # Find where in the list the correct result is
-    correct_pos = int(np.argwhere(np.equal(targets,target)))
+    correct_pos = int(np.argwhere(np.equal(target_embs,target_emb)))
     
     # Fill abs_score_matrix
     if correct_pos == 0: score_matrix.loc[pos, 'in1'] += 1
@@ -117,11 +96,10 @@ def evaluate_edge(pos, start, target, param, score_matrix, nav_model, graph_edge
     else: score_matrix.loc[pos, 'other'] += 1
     
     # Fill res_scores (do the 1- to let the best result be 1)
-    score_matrix.loc[pos, 'relative_score'] += 1 - correct_pos/len(targets)
-    score_matrix.loc[pos, 'num_edges'] += len(targets)
+    score_matrix.loc[pos, 'relative_score'] += 1 - correct_pos/len(target_embs)
+    score_matrix.loc[pos, 'num_edges'] += len(target_embs)
     
     return score_matrix
-
 
 #################
 # Main function #
@@ -129,12 +107,16 @@ def evaluate_edge(pos, start, target, param, score_matrix, nav_model, graph_edge
 
 def main():
     options = init_options_and_logger(get_navigation_training_dir(),
-                                      get_root_dir() + "models/pairwise_score_navigator_self/",
-                                      { "sample_gen_method": "shuffle" })
+                                      get_root_dir() + "models/pairwise_score_navigator/")
     
-    assert options['sample_gen_method'] == 'shuffle' or options['sample_gen_method'] == 'random'
+    embedding_dir = os.path.join(get_root_dir(), 'models/target_pred_navigator/embeddings/')
+    embedding_info = extract_embedding_model(embedding_dir, options['embedding_dim'])
+    options['embedding_file'] = embedding_info.path
+    options['beampipe_split_z'] = embedding_info.bpsplit_z
+    options['beampipe_split_phi'] = embedding_info.bpsplit_phi
     
-    options['sample_gen_method'] = 'shuffle'
+    logging.info("imported embedding '%s' with beampipe split (%d,%d)", 
+                 options['embedding_file'], options['beampipe_split_z'], options['beampipe_split_phi'])
     
     ################
     # PREPARE DATA #
@@ -158,6 +140,16 @@ def main():
     logging.info("Imported %d tracks, the maximum sequence length is %d",
                  len(train_starts), max([ len(track) for track in train_starts]))
     
+    
+    # Load embedding model
+    embedding_model = tf.keras.models.load_model(options['embedding_file'], compile=False)
+    assert options['embedding_dim'] == np.squeeze(embedding_model(0)).shape[0]
+    
+    for i in range(len(train_starts)):
+        train_starts[i] = np.squeeze(embedding_model(train_starts[i]))
+        train_targets[i] = np.squeeze(embedding_model(train_targets[i]))
+    
+    # Split train test
     train_starts, test_starts, train_params, test_params, train_targets, test_targets = \
         train_test_split(train_starts, train_params, train_targets, test_size=options['test_split'])
     
@@ -175,25 +167,22 @@ def main():
     ###############   
     
     # Prepare training and test/validation generator
-    sample_gen = gen_batch_random if options['sample_gen_method'] == 'random' else gen_batch_shuffle
-        
-    train_gen = sample_gen(options['batch_size'], np.concatenate(train_edges),
+    train_gen = gen_batch_shuffle(options['batch_size'], np.concatenate(train_edges),
                            np.concatenate(train_params), total_node_num)
     
-    test_gen = sample_gen(2*len(np.concatenate(test_edges)), np.concatenate(test_edges), 
+    test_gen = gen_batch_shuffle(2*len(np.concatenate(test_edges)), np.concatenate(test_edges), 
                           np.concatenate(test_params), total_node_num)
         
 
     # Build model
     model_params = {
-        'num_categories': total_node_num,
         'embedding_dim': options['embedding_dim'],
         'layers': [ options['layer_size'] ] * options['network_depth'],
         'activations': [ 'relu' ] * options['network_depth'],
         'learning_rate': options['learning_rate']
     }
     
-    model = build_model(**model_params)
+    navigation_model = build_model(**model_params)
     
     # Build graph (needed for testing/scoring)
     graph_edge_map = generate_graph_edge_map(prop_data, total_node_num)
@@ -202,7 +191,7 @@ def main():
     steps_per_epoch = len(np.concatenate(train_edges)) // options['batch_size']
     logging.info("Start learning embedding, steps_per_epoch = %d", steps_per_epoch)
     
-    history = model.fit(
+    history = navigation_model.fit(
         x=train_gen, 
         steps_per_epoch=steps_per_epoch,
         epochs=options['epochs'],
@@ -219,10 +208,14 @@ def main():
     ##############
     
     logging.info("start evaluation with %d tracks", len(test_edges));
+    
+    # this is WIP, similarly to the pretrained target_pred_navigator there must be ensured that the nn matches the embedding model 
+    # TODO apply improvements from target_pred_navigator_pre (maybe again copy large parts 
+    # TODO Don't forget improvements of export and JSON export for configurations...
         
     fig, axes, score = \
         make_evaluation_plots(test_starts, test_targets, test_params, history.history,
-                              lambda a,b,c,d,e: evaluate_edge(a,b,c,d,e,model,graph_edge_map))
+                              lambda a,b,c,d,e: evaluate_edge(a,b,c,d,e,graph_edge_map,navigation_model,nn,embedding_model))
         
     # Summary title and data info 
     data_gen_str = "gen: random" if options['sample_gen_method'] == 'random' else "gen: shuffle"
@@ -252,7 +245,7 @@ def main():
     output_filename = date_str + emb_str + method_str + size_str + acc_str
 
     if options['export']:
-        model.save(options['output_dir'] + output_filename)
+        navigation_model.save(options['output_dir'] + output_filename)
         logging.info("exported model to '" + options['output_dir'] + output_filename + "'")
 
         fig.savefig(options['output_dir'] + output_filename + ".png")
@@ -273,3 +266,4 @@ def main():
         
 if __name__ == "__main__":
     main()
+

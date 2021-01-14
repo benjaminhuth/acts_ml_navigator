@@ -9,7 +9,7 @@
 import os
 import sys
 import argparse
-
+import json
 import datetime
 import logging
 import pprint
@@ -67,7 +67,7 @@ def build_feedforward_model(embedding_dim,hidden_layers,activations,learning_rat
     model.compile(
         optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate), 
         loss=tf.keras.losses.MeanSquaredError(),
-        #run_eagerly=True
+        run_eagerly=True
     )
     
     return model
@@ -116,20 +116,20 @@ def evaluate_edge_nn(pos, x_emb, y_true, x_params, score_matrix, nn, model):
 def evaluate_edge_graph(pos, x_emb, y_true, x_params, score_matrix, graph_edge_map, nn, nav_model, emb_model):
     # predicted distance 
     y_pred = np.squeeze(nav_model([x_emb.reshape(1,-1), x_params.reshape(1,-1)]))
-    pred_dist = np.sum(np.square(y_pred - y_true))
+    y_pred_dist = np.sum(np.square(y_pred - y_true))
     
     # all distances (sorted)
     start_id = int(np.squeeze(nn.kneighbors(x_emb.reshape(1,-1), 1, return_distance=False)))
     target_ids = graph_edge_map[ start_id ].targets
     
-    targets = np.squeeze(emb_model(target_ids),axis=1)
-    assert y_true in targets
+    target_embs = np.squeeze(emb_model(target_ids),axis=1)
+    assert y_true in target_embs
     
-    dists = np.sort(np.sum(np.square(targets - y_pred), axis=1))
-    assert len(dists) == len(targets) == len(target_ids)
+    dists = np.sort(np.sum(np.square(target_embs - y_pred), axis=1))
+    assert len(dists) == len(target_embs) == len(target_ids)
     
     # find score
-    score = int(np.argwhere(np.equal(dists, pred_dist)))
+    score = int(np.argwhere(np.equal(dists, y_pred_dist)))
     
     # Fill abs_score_matrix
     if score == 0: score_matrix.loc[pos, 'in1'] += 1
@@ -140,8 +140,8 @@ def evaluate_edge_graph(pos, x_emb, y_true, x_params, score_matrix, graph_edge_m
     else: score_matrix.loc[pos, 'other'] += 1
     
     # Fill res_scores (do the 1- to let the best result be 1)
-    score_matrix.loc[pos, 'relative_score'] += 1 - score/len(targets)
-    score_matrix.loc[pos, 'num_edges'] += len(targets)
+    score_matrix.loc[pos, 'relative_score'] += 1 - score/len(target_embs)
+    score_matrix.loc[pos, 'num_edges'] += len(target_embs)
     
     return score_matrix
 
@@ -152,9 +152,9 @@ def evaluate_edge_graph(pos, x_emb, y_true, x_params, score_matrix, graph_edge_m
 #####################
 
 def main(): 
-    options = init_options_and_logger(get_navigation_training_dir(),
+    options = init_options_and_logger(get_navigation_training_dir(), 
                                       os.path.join(get_root_dir(), "models/target_pred_navigator/navigation/"),
-                                      { 'evaluation_method': 'graph' })   
+                                      { 'evaluation_method': 'nn' })   
     
     assert options['evaluation_method'] == 'nn' or options['evaluation_method'] == 'graph'
     
@@ -163,6 +163,9 @@ def main():
     options['embedding_file'] = embedding_info.path
     options['beampipe_split_z'] = embedding_info.bpsplit_z
     options['beampipe_split_phi'] = embedding_info.bpsplit_phi
+    
+    logging.info("Imported embedding '%s'", options['embedding_file'])
+    logging.info("Beampipe split set by embedding is (%d,%d)", options['beampipe_split_z'], options['beampipe_split_phi'])
 
     ########################
     # Import training data #
@@ -174,40 +177,43 @@ def main():
     total_beampipe_split = options['beampipe_split_z']*options['beampipe_split_phi']
     total_node_num = len(detector_data.index) - 1 + total_beampipe_split
     
+    #################
+    # Preprocessing #
+    #################    
+    
     # Beampipe split and new mapping
     prop_data = beampipe_split(prop_data, options['beampipe_split_z'], options['beampipe_split_phi'])
     prop_data = geoid_to_ordinal_number(prop_data, detector_data, total_beampipe_split)
     
     # Categorize into tracks (also needed for testing later)
     selected_params = ['dir_x', 'dir_y', 'dir_z', 'qop']
-    train_tracks_start, train_tracks_params, train_tracks_end = \
+    x_track_ids, x_track_params, y_track_ids = \
         categorize_into_tracks(prop_data, total_beampipe_split, selected_params)
     
     logging.info("Imported %d tracks, the maximum sequence length is %d",
-                 len(train_tracks_start), max([ len(track) for track in train_tracks_start ]))
-    
-    # Load embedding
-    embedding_model = tf.keras.models.load_model(options['embedding_file'], compile=False)
-    embedding_dim = np.squeeze(embedding_model(0)).shape[0]
-    
-    # Apply embedding
-    for i in range(len(train_tracks_start)):
-        train_tracks_start[i] = np.squeeze(embedding_model(train_tracks_start[i]))
-        train_tracks_end[i] = np.squeeze(embedding_model(train_tracks_end[i]))
-    logging.info("Applied pretrained embedding")
+                 len(x_track_ids), max([ len(track) for track in x_track_ids ]))
     
     # Train test split (includes shuffle)
-    x_train_embs, x_test_embs, x_train_pars, x_test_pars, y_train_embs, y_test_embs = \
-        train_test_split(train_tracks_start, train_tracks_params, train_tracks_end, test_size=options['test_split'])
+    train_test_split_result = train_test_split(x_track_ids, x_track_params, y_track_ids, test_size=options['test_split'])
     
-    # don't need track structure here
-    x_train_embs = np.concatenate(x_train_embs)
-    x_train_pars = np.concatenate(x_train_pars)
-    y_train_embs = np.concatenate(y_train_embs)
+    # Don't need track structure for training
+    x_train_ids = np.concatenate(train_test_split_result[0])
+    x_train_params = np.concatenate(train_test_split_result[2])
+    y_train_ids = np.concatenate(train_test_split_result[4])
+    assert len(x_train_ids) == len(x_train_params) == len(y_train_ids)
+    
+    # Apply embedding
+    embedding_model = tf.keras.models.load_model(options['embedding_file'], compile=False)
+    assert options['embedding_dim'] == np.squeeze(embedding_model(0)).shape[0]
+    
+    x_train_embs = np.squeeze(embedding_model(x_train_ids))
+    y_train_embs = np.squeeze(embedding_model(y_train_ids))
+    logging.info("Applied pretrained embedding to training data")
     
     logging.debug("x_train_embs.shape: %s",x_train_embs.shape)
-    logging.debug("x_train_pars.shape: %s",x_train_pars.shape)
+    logging.debug("x_train_pars.shape: %s",x_train_params.shape)
     logging.debug("y_train_embs.shape: %s",y_train_embs.shape)
+    
     
     ###############################
     # Model building and Training #
@@ -215,7 +221,7 @@ def main():
     
     # Build model
     model_params = {
-        'embedding_dim': embedding_dim,
+        'embedding_dim': options['embedding_dim'],
         'hidden_layers': [ options['layer_size'] ] * options['network_depth'],
         'activations': [ options['activation'] ] * options['network_depth'],
         'learning_rate': options['learning_rate']
@@ -224,57 +230,61 @@ def main():
     model = build_feedforward_model(**model_params)
     
     # Do the training    
-    logging.info("start training")
+    logging.info("Start training")
     
     history = model.fit(
-        x=[x_train_embs, x_train_pars], 
+        x=[x_train_embs, x_train_params], 
         y=y_train_embs,
         validation_split=options['validation_split'],
         batch_size=options['batch_size'],
         epochs=options['epochs'],
-        verbose=2
+        verbose=2,
+        callbacks=[RemainingTimeEstimator(options['epochs'])],
     )
     
-    logging.info("finished training")  
+    logging.info("Finished training")  
     
     
     ##############
     # Evaluation #
     ##############
     
-    # Build nn index
-    detector_data = pd.read_csv(options['detector_file'], dtype={'geo_id': np.uint64})
-    all_embeddings = np.squeeze(embedding_model(detector_data["ordinal_id"].to_numpy()))
+    # Apply embedding to test data
+    x_test_embs = [ np.squeeze(embedding_model(ids)) for ids in train_test_split_result[1] ]
+    x_test_params = train_test_split_result[3]
+    y_test_embs = [ np.squeeze(embedding_model(ids)) for ids in train_test_split_result[5] ]
+    assert len(x_test_embs) == len(x_test_params) == len(y_test_embs)
+    logging.info("Applied embedding to test data")
     
+    # Build nn index matching the embedding model
     nn = NearestNeighbors()
-    nn.fit(all_embeddings)
+    nn.fit(np.squeeze(embedding_model(np.arange(total_node_num))))
+    assert nn_index_matches_embedding_model(embedding_model, nn)
+    
+    graph_edge_map = generate_graph_edge_map(prop_data, total_node_num)
     
     # Do the evaluation
-    
     if options['evaluation_method'] == 'nn':
-        fig, axes, score = make_evaluation_plots(x_test_embs, y_test_embs, x_test_pars, history.history,
+        fig, axes, score = make_evaluation_plots(x_test_embs, y_test_embs, x_test_params, history.history,
                                                  lambda a,b,c,d,e: evaluate_edge_nn(a,b,c,d,e,nn,model))
     else: 
-        graph_edge_map = generate_graph_edge_map(prop_data, total_node_num)
-        
-        fig, axes, score = make_evaluation_plots(x_test_embs, y_test_embs, x_test_pars, history.history,
+        fig, axes, score = make_evaluation_plots(x_test_embs, y_test_embs, x_test_params, history.history,
                                                  lambda a,b,c,d,e: evaluate_edge_graph(a,b,c,d,e,graph_edge_map,nn,
                                                                                        model,embedding_model))
     
     # Add additional information to figure
-    bpsplit_str = "bp split: z={}, phi={}".format(options['beampipe_split_z'],options['beampipe_split_phi'])
+    bpsplit_str = "bp split: ({}, {})".format(options['beampipe_split_z'],options['beampipe_split_phi'])
     
     arch_str = "arch: [ "
     for size, activation in zip(model_params['hidden_layers'], model_params['activations']):
         arch_str += "({}, {}), ".format(size, activation)
     arch_str += "] "
     
-    lr_str = "lr: {} ".format(options['learning_rate'])
-    
     eval_str = "eval: {}".format(options['evaluation_method'])
     
-    fig.suptitle("NN based forward: {} - {} - {} - {}".format(bpsplit_str, arch_str, lr_str, eval_str), fontweight='bold')
-    fig.text(0,0,"Training data: " + options['propagation_file'])
+    data_size_str = "n: {}".format(options['prop_data_size'])
+    
+    fig.suptitle("Target Predict I  -  {}  -  {}  -  {}  -  {}".format(data_size_str, bpsplit_str, arch_str, eval_str), fontweight='bold')
     
     if options['show']:
         plt.show()
@@ -283,18 +293,25 @@ def main():
     # Export #
     ##########
    
+    eval_string = "-gr" if options['evaluation_method'] == 'graph' else "-nn"
+    date_string = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    embedding_string = "-emb{}".format(options['embedding_dim'])
+    accuracy_string = "-acc{}".format(int(score*100))
+    output_file = os.path.join(options['output_dir'], date_string + embedding_string + accuracy_string + eval_string)
+    
     if options['export']: 
-        method_string = "-forward"
-        date_string = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-        embedding_string = "-emb" + str(embedding_dim)
-        accuracy_string = "-acc" + str(int(score*100))
-        output_filename = date_string + method_string + embedding_string + accuracy_string
+        model.save(output_file)
+        logging.info("Exported model to '%s'",output_file)
     
-        model.save(options['output_dir'] + output_filename)
-        logging.info("exported model to '" + options['output_dir'] + output_filename + "'")
-    
-        fig.savefig(options['output_dir'] + output_filename + ".png")
-        logging.info("exported chart to '" + options['output_dir'] + output_filename + ".png" + "'")
+        fig.savefig(output_file + '.png')
+        logging.info("Exported chart to '%s.png'", output_file)
+        
+        with open(output_file + '.json','w') as conf_file:
+            json.dump(options, conf_file, indent=4)
+        logging.info("Exported configuration to '%s.json'", output_file)
+        
+    else:
+        logging.info("Would export to '%s'", output_file)
     
     
 if __name__ == "__main__":
