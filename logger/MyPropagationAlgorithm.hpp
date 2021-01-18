@@ -35,6 +35,7 @@
 #include <random>
 
 #include "SurfaceLogger.hpp"
+#include "RadiusAborter.hpp"
 
 using namespace Acts::UnitLiterals;
 
@@ -67,7 +68,8 @@ class MyPropagationAlgorithm : public ActsExamples::BareAlgorithm {
   /// Constructor
   /// @param [in] cnf is the configuration struct
   /// @param [in] loglevel is the loggin level
-  MyPropagationAlgorithm(const Config& cnf, Acts::Logging::Level loglevel);
+  MyPropagationAlgorithm(const Config& cnf, Acts::Logging::Level loglevel, 
+                         const std::optional<std::pair<double,double>> &direction_manipulation_config);
 
   /// Framework execute method
   /// @param [in] the algorithm context for event consistency
@@ -77,6 +79,7 @@ class MyPropagationAlgorithm : public ActsExamples::BareAlgorithm {
 
  private:
   Config m_cfg;  ///< the config class
+  const std::optional<std::pair<double,double>> m_direction_manipulation_config;
 
   /// Private helper method to create a corrleated covariance matrix
   /// @param[in] rnd is the random engine
@@ -136,11 +139,11 @@ MyPropagationAlgorithm<propagator_t>::generateCovariance(
 
 template <typename propagator_t>
 MyPropagationAlgorithm<propagator_t>::MyPropagationAlgorithm(
-    const MyPropagationAlgorithm<propagator_t>::Config& cfg,
-    Acts::Logging::Level loglevel)
-    : BareAlgorithm("MyPropagationAlgorithm", loglevel), m_cfg(cfg) 
+    const Config& cnf, Acts::Logging::Level loglevel, 
+    const std::optional<std::pair<double,double>> &direction_manipulation_config) : 
+    BareAlgorithm("MyPropagationAlgorithm", loglevel), m_cfg(cnf), 
+    m_direction_manipulation_config(direction_manipulation_config)
 {
-    
 }
 
 
@@ -162,7 +165,7 @@ PropagationOutput MyPropagationAlgorithm<propagator_t>::executeTest(
     
     // Action list and abort list WITH NEW LOGGER
     using ActionList = Acts::ActionList<SteppingLogger, MaterialInteractor, SurfaceLogger>;
-    using AbortList = Acts::AbortList<EndOfWorld>;
+    using AbortList = Acts::AbortList<EndOfWorld, TrackMLBoundaryAborter>;
     using PropagatorOptions =
         Acts::DenseStepperPropagatorOptions<ActionList, AbortList>;
 
@@ -179,6 +182,15 @@ PropagationOutput MyPropagationAlgorithm<propagator_t>::executeTest(
     mInteractor.multipleScattering = m_cfg.multipleScattering;
     mInteractor.energyLoss = m_cfg.energyLoss;
     mInteractor.recordInteractions = m_cfg.recordMaterialInteractions;
+    
+    if( m_direction_manipulation_config )
+    {
+        auto& surfaceLogger = options.actionList.get<SurfaceLogger>();
+        surfaceLogger.m_do_direction_manipulation = true;
+        surfaceLogger.m_angle_diff_min = m_direction_manipulation_config->first;
+        surfaceLogger.m_angle_diff_max = m_direction_manipulation_config->second;
+    }
+    
 
     // Set a maximum step size
     options.maxStepSize = m_cfg.maxStepSize;

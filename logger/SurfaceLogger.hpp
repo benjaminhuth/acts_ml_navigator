@@ -6,14 +6,27 @@
 #include <optional>
 #include <iostream>
 #include <mutex>
+#include <cmath>
 
 #include <Acts/Definitions/Algebra.hpp>
 #include <Acts/Geometry/GeometryIdentifier.hpp>
 
-Acts::Vector3 last_pos;
+auto angle_between(const Acts::Vector3 &a, const Acts::Vector3 &b)
+{
+    return std::acos( a.dot(b) / ( a.norm() * b.norm() ) );
+}
+
 
 struct SurfaceLogger
 {
+    /// All valid geoids (sensitive surfaces and beampipe at the moment)
+    static std::set<Acts::GeometryIdentifier> s_valid_geoids;
+    
+    bool m_do_direction_manipulation = false;
+    double m_angle_diff_min = 0.0;
+    double m_angle_diff_max = 0.0;
+    double m_dim_shift = 0.3;
+    
     /// Struct that holds all infos that are captured by the logger
     struct edge_info_t
     {
@@ -51,40 +64,64 @@ struct SurfaceLogger
         {
             return stored_data;
         }
-    } storage;
+    } s_storage;
     
-    /// All valid geoids (sensitive surfaces and beampipe at the moment)
-    static std::set<Acts::GeometryIdentifier> valid_geoids;
+    
+    auto manipulate_direction(const Acts::Vector3 &dir) const
+    {
+        Acts::Vector3 new_dir = dir;
+        double angle_diff = 0;
+        
+        do
+        {
+            Acts::Vector3 shift_vec = Acts::Vector3::Random() * m_dim_shift;
+            new_dir = dir + shift_vec;
+            angle_diff = angle_between(dir, new_dir) * 360. / (2*M_PI);
+        } 
+        while( angle_diff < m_angle_diff_min || angle_diff > m_angle_diff_max );
+        
+        return new_dir.normalized();
+    }
     
     /// Call to the logger
     template <typename propagator_state_t, typename stepper_t>
     void operator()(propagator_state_t& state, const stepper_t& stepper, result_type& result) const 
     {
+        auto push_back_edge = [&state, &stepper, &result](const auto &surface)
+        {
+            result.edges.push_back(edge_info_t{
+                stepper.position(state.stepping),
+                stepper.direction(state.stepping),
+                stepper.charge(state.stepping)/stepper.momentum(state.stepping),
+                {surface->geometryId(),surface->center(state.geoContext.get())},
+                std::nullopt
+            });
+            
+        };
+        
+        // Export if necessary
         if( state.navigation.navigationBreak && !result.is_already_exported )
         {
             if( !result.edges.back().end_surface.has_value() )
                 result.edges.pop_back();
             
-            storage.thread_safe_push_back( std::move(result.edges) );
+            s_storage.thread_safe_push_back( std::move(result.edges) );
             result.is_already_exported = true;
         }
         
         if( state.navigation.currentSurface == nullptr )
             return;
         
+        // Set the start of the edge at the beginning (or when else necessary)
         const auto &surface = state.navigation.currentSurface;
         
         if( result.edges.empty() || result.edges.back().end_surface.has_value() )
         {
-            // only add sensitive surfaces or beam pipe
-            if( valid_geoids.find(surface->geometryId()) != valid_geoids.end() )
-                result.edges.push_back(edge_info_t{
-                    stepper.position(state.stepping),
-                    stepper.direction(state.stepping),
-                    stepper.charge(state.stepping)/stepper.momentum(state.stepping),
-                    {surface->geometryId(),surface->center(state.geoContext.get())},
-                    std::nullopt
-                });
+            if( s_valid_geoids.find(surface->geometryId()) != s_valid_geoids.end() )
+                push_back_edge(surface);
+            
+            if( m_do_direction_manipulation )
+                state.stepping.pars.template segment<3>(Acts::eFreeDir0) = manipulate_direction(stepper.direction(state.stepping));
             
             return;
         }
@@ -93,19 +130,16 @@ struct SurfaceLogger
         
         // If the new surface is different from the old one, set end of edge
         if( !last_edge.end_surface.has_value() && surface->geometryId() != last_edge.start_surface.first )
-            if( valid_geoids.find(surface->geometryId()) != valid_geoids.end() )
+            if( s_valid_geoids.find(surface->geometryId()) != s_valid_geoids.end() )
             {
                 // end of last edge
                 last_edge.end_surface = {surface->geometryId(),surface->center(state.geoContext.get())};
                 
                 // start of new edge
-                result.edges.push_back(edge_info_t{
-                    stepper.position(state.stepping),
-                    stepper.direction(state.stepping),
-                    stepper.charge(state.stepping)/stepper.momentum(state.stepping),
-                    {surface->geometryId(),surface->center(state.geoContext.get())},
-                    std::nullopt
-                });
+                push_back_edge(surface);
+                
+                if( m_do_direction_manipulation )
+                    state.stepping.pars.template segment<3>(Acts::eFreeDir0) = manipulate_direction(stepper.direction(state.stepping));
             }
     }
 

@@ -26,10 +26,8 @@
 // My own propagation algorithm
 #include "MyPropagationAlgorithm.hpp"
 
-decltype(SurfaceLogger::storage) SurfaceLogger::storage;
-decltype(SurfaceLogger::valid_geoids) SurfaceLogger::valid_geoids;
-
-
+decltype(SurfaceLogger::s_storage) SurfaceLogger::s_storage;
+decltype(SurfaceLogger::s_valid_geoids) SurfaceLogger::s_valid_geoids;
 
 int main(int argc, char **argv) 
 {
@@ -45,6 +43,16 @@ int main(int argc, char **argv)
     ActsExamples::Options::addRandomNumbersOptions(desc);
     ActsExamples::Options::addPropagationOptions(desc);
     ActsExamples::Options::addOutputOptions(desc);
+    
+    desc.add_options()("gen_false_samples", 
+                       boost::program_options::value<bool>()->default_value(false), 
+                       "generate false samples by manipulating the direction on each surface")
+                      ("gen_false_samples_angle_diff_min", 
+                       boost::program_options::value<double>()->default_value(10.), 
+                       "minimum angle the manipulated direction differs from the original one (in degree)")
+                      ("gen_false_samples_angle_diff_max", 
+                       boost::program_options::value<double>()->default_value(30.), 
+                       "maximum angle the manipulated direction differs from the original one (in degree)");
 
     // Add specific options for this geometry
     detector.addOptions(desc);
@@ -68,10 +76,10 @@ int main(int argc, char **argv)
     }
     
     // init set of sensitive surfaces in SurfaceLogger
-    SurfaceLogger::valid_geoids.insert(tGeometry->getBeamline()->geometryId());
+    SurfaceLogger::s_valid_geoids.insert(tGeometry->getBeamline()->geometryId());
     tGeometry->visitSurfaces([&](const Acts::Surface* surface)
     {
-        SurfaceLogger::valid_geoids.insert(surface->geometryId());  
+        SurfaceLogger::s_valid_geoids.insert(surface->geometryId());  
         
         if( auto layer = surface->associatedLayer(); layer )
             if( auto tvolume = layer->trackingVolume(); tvolume )
@@ -95,33 +103,31 @@ int main(int argc, char **argv)
         using field_type = typename std::decay_t<decltype(bField)>::element_type;
         Acts::SharedBField<field_type> fieldMap(bField);
         using field_map_type = decltype(fieldMap);
+
+        auto stepper = Acts::EigenStepper<field_map_type>{std::move(fieldMap)};
         
-        using EStepper = Acts::EigenStepper<field_map_type>;
-        using AStepper = Acts::AtlasStepper<field_map_type>;
-        using SStepper = Acts::StraightLineStepper;
-        std::optional<std::variant<EStepper, AStepper, SStepper>> var_stepper;
+        using Stepper = decltype(stepper);
+        using Propagator = Acts::Propagator<Stepper, Acts::Navigator>;
+        Propagator propagator(std::move(stepper), std::move(navigator));
 
-        // translate option to variant
-        if (vm["prop-stepper"].template as<int>() == 0)
-            var_stepper = Acts::StraightLineStepper{};
-        else if (vm["prop-stepper"].template as<int>() == 1)
-            var_stepper = Acts::EigenStepper<field_map_type>{std::move(fieldMap)};
-        else if (vm["prop-stepper"].template as<int>() == 2)
-            var_stepper = Acts::AtlasStepper<field_map_type>{std::move(fieldMap)};
-
-        // resolve stepper, setup propagator
-        std::visit([&](auto& stepper) 
+        // Read the propagation config and create the algorithms
+        auto pAlgConfig = ActsExamples::Options::readPropagationConfig(vm, propagator);
+        pAlgConfig.randomNumberSvc = randomNumberSvc;
+        
+        std::optional<std::pair<double,double>> do_dir_manip;
+        if( vm["gen_false_samples"].as<bool>() )
         {
-            using Stepper = std::decay_t<decltype(stepper)>;
-            using Propagator = Acts::Propagator<Stepper, Acts::Navigator>;
-            Propagator propagator(std::move(stepper), std::move(navigator));
-
-            // Read the propagation config and create the algorithms
-            auto pAlgConfig = ActsExamples::Options::readPropagationConfig(vm, propagator);
-            pAlgConfig.randomNumberSvc = randomNumberSvc;
-            sequencer.addAlgorithm(std::make_shared<MyPropagationAlgorithm<Propagator>>(pAlgConfig, logLevel));
-        },
-        *var_stepper);
+            std::cout << "Enabled direction manipulation ("
+                      << vm["gen_false_samples_angle_diff_min"].as<double>() << ", "
+                      << vm["gen_false_samples_angle_diff_max"].as<double>() << ")!" << std::endl;
+            
+            do_dir_manip = {
+                vm["gen_false_samples_angle_diff_min"].as<double>(),
+                vm["gen_false_samples_angle_diff_max"].as<double>()
+            };
+        }
+        
+        sequencer.addAlgorithm(std::make_shared<MyPropagationAlgorithm<Propagator>>(pAlgConfig, logLevel, do_dir_manip));
     },
     bFieldVar);
     
@@ -144,7 +150,7 @@ int main(int argc, char **argv)
     const std::string outputDir = vm["output-dir"].template as<std::string>();
     std::fstream output_file(outputDir + filename, std::fstream::out | std::fstream::trunc);
                       
-    output_file << SurfaceLogger::storage.data();
+    output_file << SurfaceLogger::s_storage.data();
     
     return sequencer_exit_code;
 }
