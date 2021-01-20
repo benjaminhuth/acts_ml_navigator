@@ -1,6 +1,7 @@
 import os
 import sys
 import time
+import collections
 
 import numpy as np
 import pandas as pd
@@ -17,12 +18,12 @@ def get_colors():
     Returns the colors for accuracy in the order bad -> good (gray -> green)
     '''
     return [
-        '#737373',  # Gray
-        '#800000',  # Dark red
-        '#ff3300',  # Bright red
-        '#ffff00',  # Yellow
+        '#006600',  # Dark green
         '#00cc00',  # Light green
-        '#006600'   # Dark green
+        '#ffff00',  # Yellow
+        '#ff3300',  # Bright red
+        '#800000',  # Dark red
+        '#737373',  # Gray
     ]
 
 
@@ -89,7 +90,7 @@ def next_neighbor_accuracy(y_true, y_pred, nn):
 def neighbor_accuracy_detailed(y_true,y_pred, nn):
     '''
     Detailed neighborhood accuracy: Returns a list of floats [0,1] reflecting, how many predictions are
-    in the nearest (1,2,3,5,10,otherwise)-neigbors of the true value
+    in the nearest (1,2,3,5,10,otherwise)-neigbors of the true value.
     '''
     assert len(y_true) == len(y_pred)
     
@@ -116,69 +117,10 @@ def neighbor_accuracy_detailed(y_true,y_pred, nn):
     bad = len(y_true) - (in1 + in2 + in3 + in5 + in10)
     
     return np.array([in1, in2, in3, in5, in10, bad]) / len(y_true)
-        
-        
-
-def plot_detailed_neighbour_accuracy(log_epochs, neighbor_history):
-    '''
-    takes a list of epochs and a np.ndarray of the logged history
-    returns an matplotlib (figure, axes) tuple
-    '''
-    assert neighbor_history.shape[0] == len(log_epochs) and neighbor_history.shape[1] == 6
-    
-    epochs = np.arange(0,len(neighbor_history)).astype(np.int)
-    
-    stacked_results = [
-        np.zeros(len(neighbor_history)),
-        np.sum(neighbor_history[:,5:6],axis=1),
-        np.sum(neighbor_history[:,4:6],axis=1),
-        np.sum(neighbor_history[:,3:6],axis=1),
-        np.sum(neighbor_history[:,2:6],axis=1),
-        np.sum(neighbor_history[:,1:6],axis=1),
-        np.sum(neighbor_history[:,0:6],axis=1),
-    ]
-    
-    colors = get_colors()
-    
-    fig, ax = plt.subplots()
-    
-    for i in range(neighbor_history.shape[1]):
-        ax.fill_between(log_epochs,stacked_results[i],stacked_results[i+1],color=colors[i])
-        ax.plot(log_epochs,stacked_results[i],color=colors[i])
-        
-    ax.set_xticks(log_epochs, minor=False)
-    ax.legend(['not in best 10','in best 10','in best 5','in best 3','in best 2','correct'], loc='lower left', framealpha=1.)
-    
-    return fig, ax
-
-
-###################################
-# Track position based evaluation #
-###################################
-
-def compute_pos_list(track_lengths, num_edges):
-    '''
-    returns an array, containing integers which represent the position in the track of the ith element
-    '''
-    assert np.sum(track_lengths) == num_edges
-    
-    pos_list = []
-    pos_in_track = 0
-    n_track = 0
-    
-    for i in range(num_edges):
-        if pos_in_track == track_lengths[n_track]:
-            pos_in_track = 0
-            n_track += 1
-            
-        pos_list.append(pos_in_track)
-        pos_in_track += 1
-    
-    return np.array(pos_list)
 
 
 
-def make_evaluation_plots(tracks_edges_start, tracks_edges_target, tracks_params, history, evaluate_edge, figsize=(16,10)):
+def evaluate_and_plot(tracks_edges_start, tracks_params, tracks_edges_target, history, evaluate_edge, figsize=(16,10)):
     '''
     Function that makes a collection of plots for evaluation of a model
     
@@ -194,6 +136,9 @@ def make_evaluation_plots(tracks_edges_start, tracks_edges_target, tracks_params
     * axes array (containing 3x2 subplots)
     * score (ratio of overall 'in1' predictions)
     '''
+    assert len(tracks_edges_start) == len(tracks_params) == len(tracks_edges_target)
+    assert tracks_edges_start[0].shape == tracks_edges_target[0].shape
+    assert tracks_params[0].shape[1] == 3 or tracks_params[0].shape[1] == 4
     
     ##############
     # Evaluation #
@@ -201,10 +146,17 @@ def make_evaluation_plots(tracks_edges_start, tracks_edges_target, tracks_params
     
     max_track_length = max([ len(track) for track in tracks_edges_start ])
     
-    score_matrix = pd.DataFrame(data = np.zeros((max_track_length, 8)),
-                                    index=np.arange(max_track_length),
-                                    columns=['in1','in2','in3','in5','in10','other','relative_score','num_edges'])
+    # Initialize the result
+    EvaluationResult = collections.namedtuple("EvaluationResult", ["score_matrix", "beampipe_scores"])
     
+    result = EvaluationResult(
+        pd.DataFrame(data = np.zeros((max_track_length, 8)),
+                     index=np.arange(max_track_length),
+                     columns=['in1','in2','in3','in5','in10','other','num_edges','relative_score']),
+        { 'in1': [], 'in2': [], 'in3': [], 'in5': [], 'in10': [], 'other': [] }
+    )
+    
+    # Loop over all tracks
     times = []
         
     if 'TERM' in os.environ:
@@ -215,7 +167,7 @@ def make_evaluation_plots(tracks_edges_start, tracks_edges_target, tracks_params
         t0 = time.time()
         
         for pos_in_track, (start, target, param) in enumerate(zip(starts, targets, params)):
-            score_matrix = evaluate_edge(pos_in_track, start, target, param, score_matrix)
+            result = evaluate_edge(pos_in_track, start, target, param, result)
             
         t1 = time.time()
         
@@ -224,21 +176,24 @@ def make_evaluation_plots(tracks_edges_start, tracks_edges_target, tracks_params
         remaining_str = time.strftime("%Hh:%Mm:%Ss", time.gmtime(remaining))
             
         if not 'TERM' in os.environ:
-            progress = 100*i/len(tracks_edges_start)
-            print("Progress: {:.1f}% - estimated time remaining: {}".format(progress, remaining_str), flush=True)
+            # Only print 10 progress statements
+            if i % (len(tracks_edges_start) // 10) == 0:
+                progress = 100*i/len(tracks_edges_start)
+                print("Progress: {:.1f}% - estimated time remaining: {}".format(progress, remaining_str), 
+                      flush=True)
         else:
             print_progress_bar(i+1, len(tracks_edges_start),
                                "Progress: ", "- estimated time remaining: {}".format(remaining_str))  
     
     # Normalize
-    hits_per_pos = np.sum(score_matrix[['in1','in2','in3','in5','in10','other']].values, axis=1)
-    total_num_edges = np.sum(score_matrix[['in1','in2','in3','in5','in10','other']].values.flatten())
+    hits_per_pos = np.sum(result.score_matrix[['in1','in2','in3','in5','in10','other']].values, axis=1)
+    total_num_edges = np.sum(result.score_matrix[['in1','in2','in3','in5','in10','other']].values.flatten())
     
     assert hits_per_pos.all() > 0
     assert total_num_edges > 0
     
-    score_matrix['relative_score'] = score_matrix['relative_score'].to_numpy() / hits_per_pos
-    score_matrix['num_edges'] = score_matrix['num_edges'].to_numpy() / hits_per_pos
+    result.score_matrix['relative_score'] = result.score_matrix['relative_score'].to_numpy() / hits_per_pos
+    result.score_matrix['num_edges'] = result.score_matrix['num_edges'].to_numpy() / hits_per_pos
     
     ############
     # Plotting #
@@ -261,59 +216,110 @@ def make_evaluation_plots(tracks_edges_start, tracks_edges_target, tracks_params
     ax[0,1].set_xlabel("epochs")
     ax[0,1].set_ylabel("accuracy")
     ax[0,1].set_title("Accuracy")
+    
+    accuracy_legend = []
     if 'accuracy' in history and 'val_accuracy' in history:
         ax[0,1].plot(history['accuracy'])
         ax[0,1].plot(history['val_accuracy'])
-        ax[0,1].legend(["train accuracy", "validation accuracy"])
-    else:
+        accuracy_legend += ["train accuracy", "validation accuracy"]
+    if 'binary_accuracy' in history and 'val_binary_accuracy' in history:
+        ax[0,1].plot(history['binary_accuracy'])
+        ax[0,1].plot(history['val_binary_accuracy'])
+        accuracy_legend += ["train binary accuracy", "validation binary accuracy"]
+    
+    if len(accuracy_legend) == 0:
         ax[0,1].text(0.2,0.5,"no accuracy to plot")
+    else:
+        ax[0,1].legend(accuracy_legend)
+    
     
     # Plot absolute distribution (in total)    
-    for i, (name, series) in enumerate(score_matrix[['in1','in2','in3','in5','in10','other']].iteritems()):
+    for i, (name, series) in enumerate(result.score_matrix[['in1','in2','in3','in5','in10','other']].iteritems()):
         res = np.sum(series.to_numpy())
         norm_res = res / total_num_edges
-        rects = ax[0,2].bar(i,norm_res,color=get_colors()[-(i+1)])
+        rects = ax[0,2].bar(i,norm_res,color=get_colors()[i])
         autolabel(ax[0,2], rects)
         
     ax[0,2].set_title("Score (all edges)")
     ax[0,2].set_xlabel("score bins")
     ax[0,2].set_ylabel("absolute score")
     ax[0,2].set_ylim([0,1])
-    ax[0,2].legend(score_matrix.columns.tolist())
+    ax[0,2].legend(result.score_matrix.columns.tolist())
     
     # Plot distribution per track pos
     current = np.zeros(max_track_length)
-    for i, (name, series) in enumerate(score_matrix[['in1','in2','in3','in5','in10','other']].iteritems()):
+    for i, (name, series) in enumerate(result.score_matrix[['in1','in2','in3','in5','in10','other']].iteritems()):
         # dont plot 'other'
-        if i == len(score_matrix.columns)-3:
+        if i == len(result.score_matrix.columns)-3:
             break
         
         current += series.to_numpy() / hits_per_pos
-        ax[1,0].plot(current, color=get_colors()[-(i+1)])
+        ax[1,0].plot(current, color=get_colors()[i])
         
     ax[1,0].set_title("Score (per track position)")
     ax[1,0].set_xlabel("track position")
     ax[1,0].set_ylabel("score")
     ax[1,0].set_ylim([0,1.1])
-    ax[1,0].legend(score_matrix.columns.tolist()[:-1])
+    ax[1,0].legend(result.score_matrix.columns.tolist()[:-1])
         
-    # Plot relative score
-    ax[1,1].set_title("Relative score (per track position)")
-    ax[1,1].set_xlabel("track position")
-    ax[1,1].set_ylabel("relative score (w.r.t. # edges)")
-    ax[1,1].set_ylim([0,1.1])
-    if not score_matrix['relative_score'].to_numpy().all() == 0:
-        ax[1,1].plot(score_matrix['relative_score'].to_numpy())
-    else:
-        ax[1,1].text(0.2,0.5,"no relative_score to plot")
+    # Plot beampipe score historgram
+    hist_data = np.array([ result.beampipe_scores[k] for k in result.beampipe_scores.keys() ], dtype=object)
+    ax[1,1].set_title("Score at beampipe (wrt z coord)")
+    ax[1,1].set_xlabel("z-coord bins")
+    ax[1,1].set_ylabel("score")
+    ax[1,1].hist(hist_data, 25, histtype='bar', stacked=True, color=get_colors())
+    ax[1,1].legend(result.beampipe_scores.keys())
     
     # Plot possible edges per track pos
     ax[1,2].set_title("Mean graph edges per track position")
     ax[1,2].set_xlabel("track position")
     ax[1,2].set_ylabel("mean #edges")
-    if not score_matrix['num_edges'].to_numpy().all() == 0:
-        ax[1,2].plot(score_matrix['num_edges'].to_numpy())
+    if not result.score_matrix['num_edges'].to_numpy().all() == 0:
+        ax[1,2].plot(result.score_matrix['num_edges'].to_numpy())
     else:
         ax[1,2].text(0.2,0.5,"no relative_score to plot")
     
-    return fig, ax, float(np.sum(score_matrix['in1'].to_numpy())/total_num_edges)
+    return fig, ax, float(np.sum(result.score_matrix['in1'].to_numpy())/total_num_edges)
+
+
+
+
+def fill_in_results(pos_in_track, score, surface_z_coord, result, num_targets=None):
+    '''
+    Fillst the entries of the EvaluationResult named tuple.
+    
+    Parameters:
+    * pos_in_track: integer
+    * score: in which of ['in1','in2','in3','in5','in10','other'] to put the result
+    * surface_z_coord: z coord of the surface_z_coord
+    * result: EvaluationResult
+    * [OPT] num_targets: integer
+    
+    Returns:
+    * EvaluationResult: modified result type
+    '''
+    
+    if score == 0: 
+        result.score_matrix.loc[pos_in_track, 'in1'] += 1
+        if pos_in_track == 0: result.beampipe_scores['in1'].append( surface_z_coord )
+    elif score == 1: 
+        result.score_matrix.loc[pos_in_track, 'in2'] += 1
+        if pos_in_track == 0: result.beampipe_scores['in2'].append( surface_z_coord )
+    elif score == 2: 
+        result.score_matrix.loc[pos_in_track, 'in3'] += 1
+        if pos_in_track == 0: result.beampipe_scores['in3'].append( surface_z_coord )
+    elif score < 5: 
+        result.score_matrix.loc[pos_in_track, 'in5'] += 1
+        if pos_in_track == 0: result.beampipe_scores['in5'].append( surface_z_coord )
+    elif score < 10:
+        result.score_matrix.loc[pos_in_track, 'in10'] += 1
+        if pos_in_track == 0: result.beampipe_scores['in10'].append( surface_z_coord )
+    else: 
+        result.score_matrix.loc[pos_in_track, 'other'] += 1
+        if pos_in_track == 0: result.beampipe_scores['other'].append( surface_z_coord )
+    
+    if num_targets != None:
+        result.score_matrix.loc[pos_in_track, 'num_edges'] += num_targets
+        result.score_matrix.loc[pos_in_track, 'relative_score'] += 1 - score/num_targets
+    
+    return result

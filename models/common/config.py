@@ -18,6 +18,11 @@ def get_navigation_training_dir():
     '''
     return os.path.join(get_root_dir(), "logger/navigation_training/")
 
+def get_false_samples_dir():
+    '''
+    Returns the directory where false sample for the pairwise scoring model are stored
+    '''
+    return os.path.join(get_root_dir(), "logger/false_samples/")
 
 def get_embedding_training_dir():
     '''

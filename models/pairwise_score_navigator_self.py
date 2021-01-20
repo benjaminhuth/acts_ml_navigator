@@ -1,6 +1,7 @@
 import os
 import datetime
 import logging
+import json
 
 import numpy as np
 import pandas as pd
@@ -76,7 +77,7 @@ def build_model(num_categories, embedding_dim, layers, activations, learning_rat
    
 
     
-def evaluate_edge(pos, start, target, param, score_matrix, nav_model, graph_edge_map):
+def evaluate_edge(pos, start, target, param, result, nav_model, graph_map):
     '''
     Function which evaluates all metrics for a single edge in a track.
     
@@ -85,15 +86,15 @@ def evaluate_edge(pos, start, target, param, score_matrix, nav_model, graph_edge
     * start: a id representing the start surface
     * target: a id representing the target surface
     * param: the track parameters at the start (i.e. direction and qop)
-    * score_matrix: a pandas df to fill in the results
+    * result: named tuple EvaluationResult
     * nav_model: the navigation model to predict the score of a tuple [start_surface, end_surface, params]
     * graph_edge_map: a dictionary { start: namedtuple( targets, weights ) }
     
     Returns:
     * modified score_matrix (pandas dataframe)
     '''
-    
-    targets = graph_edge_map[ start ].targets
+    node_data = graph_map[ start ]
+    targets = node_data.targets
         
     # Broadcast input values to arrays for vectorized inference
     starts = np.full(len(targets), start )
@@ -109,18 +110,7 @@ def evaluate_edge(pos, start, target, param, score_matrix, nav_model, graph_edge
     correct_pos = int(np.argwhere(np.equal(targets,target)))
     
     # Fill abs_score_matrix
-    if correct_pos == 0: score_matrix.loc[pos, 'in1'] += 1
-    elif correct_pos == 1: score_matrix.loc[pos, 'in2'] += 1
-    elif correct_pos == 2: score_matrix.loc[pos, 'in3'] += 1
-    elif correct_pos < 5: score_matrix.loc[pos, 'in5'] += 1
-    elif correct_pos < 10: score_matrix.loc[pos, 'in10'] += 1
-    else: score_matrix.loc[pos, 'other'] += 1
-    
-    # Fill res_scores (do the 1- to let the best result be 1)
-    score_matrix.loc[pos, 'relative_score'] += 1 - correct_pos/len(targets)
-    score_matrix.loc[pos, 'num_edges'] += len(targets)
-    
-    return score_matrix
+    return fill_in_results(pos, correct_pos, node_data.position[2], result, len(targets))
 
 
 #################
@@ -129,61 +119,65 @@ def evaluate_edge(pos, start, target, param, score_matrix, nav_model, graph_edge
 
 def main():
     options = init_options_and_logger(get_navigation_training_dir(),
-                                      get_root_dir() + "models/pairwise_score_navigator_self/",
-                                      { "sample_gen_method": "shuffle" })
+                                      os.path.join(get_root_dir(), "models/pairwise_score_navigator_self/"))
     
-    assert options['sample_gen_method'] == 'shuffle' or options['sample_gen_method'] == 'random'
-    
-    options['sample_gen_method'] = 'shuffle'
+    options['propagation_file_false'] = extract_propagation_data(get_false_samples_dir())[ options['prop_data_size'] ]
+    logging.info("Load false samples from '%s'", options['propagation_file_false'])
+    logging.warning(">>> Does not yet support false samples method graph 'graph' <<<)")
     
     ################
     # PREPARE DATA #
     ################
         
-    prop_data = pd.read_csv(options['propagation_file'], dtype={'start_id': np.uint64, 'end_id': np.uint64})
+    prop_data_true = pd.read_csv(options['propagation_file'], dtype={'start_id': np.uint64, 'end_id': np.uint64})
+    prop_data_false = pd.read_csv(options['propagation_file_false'], dtype={'start_id': np.uint64, 'end_id': np.uint64})
     detector_data = pd.read_csv(options['detector_file'], dtype={'geo_id': np.uint64}) 
     
     total_beampipe_split = options['beampipe_split_z']*options['beampipe_split_phi']
     total_node_num = len(detector_data.index) - 1 + total_beampipe_split
-    
-    # Beampipe split and new mapping
-    prop_data = beampipe_split(prop_data, options['beampipe_split_z'], options['beampipe_split_phi'])
-    prop_data = geoid_to_ordinal_number(prop_data, detector_data, total_beampipe_split)
-    
-    # Categorize into tracks (also needed for testing later)
     selected_params = ['dir_x', 'dir_y', 'dir_z', 'qop']
-    train_starts, train_params, train_targets = \
-        categorize_into_tracks(prop_data, total_beampipe_split, selected_params)
     
-    logging.info("Imported %d tracks, the maximum sequence length is %d",
-                 len(train_starts), max([ len(track) for track in train_starts]))
+    prop_data_true = beampipe_split(prop_data_true, options['beampipe_split_z'], options['beampipe_split_phi'])
+    prop_data_true = geoid_to_ordinal_number(prop_data_true, detector_data, total_beampipe_split)
+    true_tracks = categorize_into_tracks(prop_data_true, total_beampipe_split, selected_params)
+    
+    prop_data_false = beampipe_split(prop_data_false, options['beampipe_split_z'], options['beampipe_split_phi'])
+    prop_data_false = geoid_to_ordinal_number(prop_data_false, detector_data, total_beampipe_split)
+    false_tracks = categorize_into_tracks(prop_data_false, total_beampipe_split, selected_params)
+    
+    logging.info("Imported %d TRUE tracks, the maximum sequence length is %d",
+                 len(true_tracks[0]), max([ len(track) for track in true_tracks[0]]))
+    logging.info("Imported %d FALSE tracks, the maximum sequence length is %d",
+                 len(false_tracks[0]), max([ len(track) for track in false_tracks[0]]))
     
     train_starts, test_starts, train_params, test_params, train_targets, test_targets = \
-        train_test_split(train_starts, train_params, train_targets, test_size=options['test_split'])
+        train_test_split(true_tracks.start_ids, true_tracks.start_params, true_tracks.target_ids,
+                         test_size=options['test_split'])
     
-    # Merge start and end id for the fit function
-    train_edges = []
-    for start_ids, end_ids in zip(train_starts, train_targets):
-        train_edges.append( np.stack([start_ids, end_ids], axis=1) )
+    num_true_train_samples = len(np.concatenate(train_starts))
+    num_false_train_samples = len(np.concatenate(false_tracks.start_ids))
     
-    test_edges = []
-    for start_ids, end_ids in zip(test_starts, test_targets):
-        test_edges.append( np.stack([start_ids, end_ids], axis=1) )
+    # Add false samples
+    train_starts += false_tracks.start_ids
+    train_params += false_tracks.start_params
+    train_targets += false_tracks.target_ids
+    
+    # Flatten out track structure for training data
+    train_starts = np.concatenate(train_starts)
+    train_params = np.concatenate(train_params)
+    train_targets = np.concatenate(train_targets)
+    train_y = np.concatenate([ np.ones(num_true_train_samples), np.zeros(num_false_train_samples) ])
+    
+    assert len(train_starts) == len(train_params) == len(train_targets) == len(train_y)
+    
+    logging.info("Training data: %.2f%% true samples, %.2f%% false samples",
+                 100 * num_true_train_samples / (num_true_train_samples + num_false_train_samples),
+                 100 * num_false_train_samples / (num_true_train_samples + num_false_train_samples))
     
     ###############
     # Train model #
     ###############   
     
-    # Prepare training and test/validation generator
-    sample_gen = gen_batch_random if options['sample_gen_method'] == 'random' else gen_batch_shuffle
-        
-    train_gen = sample_gen(options['batch_size'], np.concatenate(train_edges),
-                           np.concatenate(train_params), total_node_num)
-    
-    test_gen = sample_gen(2*len(np.concatenate(test_edges)), np.concatenate(test_edges), 
-                          np.concatenate(test_params), total_node_num)
-        
-
     # Build model
     model_params = {
         'num_categories': total_node_num,
@@ -194,22 +188,19 @@ def main():
     }
     
     model = build_model(**model_params)
+    #model.summary()
     
-    # Build graph (needed for testing/scoring)
-    graph_edge_map = generate_graph_edge_map(prop_data, total_node_num)
-    
-    # Do training
-    steps_per_epoch = len(np.concatenate(train_edges)) // options['batch_size']
-    logging.info("Start learning embedding, steps_per_epoch = %d", steps_per_epoch)
+    logging.info("Start learning embedding")
     
     history = model.fit(
-        x=train_gen, 
-        steps_per_epoch=steps_per_epoch,
+        x=[train_starts, train_targets, train_params],
+        y=train_y, 
+        batch_size=options['batch_size'],
         epochs=options['epochs'],
-        validation_data=next(test_gen),
+        validation_split=options['validation_split'],
         verbose=2,
         callbacks=[
-            tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True),
+            #tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True),
             RemainingTimeEstimator(options['epochs']),
         ]
     )
@@ -218,14 +209,17 @@ def main():
     # Evaluation #
     ##############
     
-    logging.info("start evaluation with %d tracks", len(test_edges));
+    logging.info("start evaluation with %d tracks", len(test_starts));
+    
+    # Build graph (needed for testing/scoring)
+    graph_map = make_graph_map(prop_data_true, total_node_num)
         
     fig, axes, score = \
-        make_evaluation_plots(test_starts, test_targets, test_params, history.history,
-                              lambda a,b,c,d,e: evaluate_edge(a,b,c,d,e,model,graph_edge_map))
+        evaluate_and_plot(test_starts, test_params, test_targets, history.history,
+                              lambda a,b,c,d,e: evaluate_edge(a,b,c,d,e,model,graph_map))
         
     # Summary title and data info 
-    data_gen_str = "gen: random" if options['sample_gen_method'] == 'random' else "gen: shuffle"
+    data_gen_str = "gen: simulated"
     bpsplit_str = "bp split: z={}, phi={}".format(options['beampipe_split_z'],options['beampipe_split_phi'])
     
     arch_str = "arch: [ "
@@ -238,27 +232,21 @@ def main():
     fig.suptitle("Pairwise Score Nav: {} - {} - {} - {}".format(bpsplit_str, data_gen_str, arch_str, lr_str), fontweight='bold')
     fig.text(0,0,"Training data: " + options['propagation_file'])
     
-    plt.show()
+    if options['show']:
+        plt.show()
     
     ##########
     # Export #
     ##########
     
     date_str   = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    method_str = "-rnd" if options['sample_gen_method'] == 'random' else '-shf'
+    method_str = "-gen"
     size_str   = "-n{}".format(options['prop_data_size'])
     emb_str    = "-emb{}".format(options['embedding_dim'])
     acc_str    = "-acc{}".format(round(score*100))
-    output_filename = date_str + emb_str + method_str + size_str + acc_str
-
-    if options['export']:
-        model.save(options['output_dir'] + output_filename)
-        logging.info("exported model to '" + options['output_dir'] + output_filename + "'")
-
-        fig.savefig(options['output_dir'] + output_filename + ".png")
-        logging.info("exported chart to '" + options['output_dir'] + output_filename + ".png" + "'")
-    else:
-        logging.info("output filename would be: '%s'",output_filename)
+    output_file = os.path.join( options['output_dir'], date_str + emb_str + method_str + size_str + acc_str )
+    
+    export_results(output_file, model, fig, options)
     
     
     # Create separate embedding model for plotting with reduced dimensionality

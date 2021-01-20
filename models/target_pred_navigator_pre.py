@@ -74,7 +74,7 @@ def build_feedforward_model(embedding_dim,hidden_layers,activations,learning_rat
 
 
 
-def evaluate_edge_nn(pos, x_emb, y_true, x_params, score_matrix, nn, model):
+def evaluate_edge_nn(pos, x_emb, y_true, x_params, result, nn, model, graph_map):
     '''
     Evaluates one edge and puts result into a score_matrix. Evaluation is based on a nn index.
     Intended to be used inside 'make_evaluation_plots()'.
@@ -87,63 +87,50 @@ def evaluate_edge_nn(pos, x_emb, y_true, x_params, score_matrix, nn, model):
     * score_matrix (dataframe): dataframe for results
     * nn (sklearn knn index)
     * model (Keras model)
+    * graph_map (dictionary): { id : targets, weights, position }
     
     Returns:
     * dataframe: the modified score_matrix
     '''
     y_pred = model([x_emb.reshape(1,-1), x_params.reshape(1,-1)])
     
+    x_idx = int(np.squeeze(nn.kneighbors(x_emb.reshape(1,-1), 1, return_distance=False)))
     y_true_idx = int(np.squeeze(nn.kneighbors(y_true.reshape(1,-1), 1, return_distance=False)))
     y_pred_idxs = np.squeeze(nn.kneighbors(y_pred, 10, return_distance=False))
     
-    if y_pred_idxs[0] == y_true_idx: 
-        score_matrix.loc[pos, 'in1'] += 1
-    elif y_pred_idxs[1] == y_true_idx: 
-        score_matrix.loc[pos, 'in2'] += 1
-    elif y_pred_idxs[2] == y_true_idx: 
-        score_matrix.loc[pos, 'in3'] += 1
-    elif np.equal(y_pred_idxs[3:5], y_true_idx).any(): 
-        score_matrix.loc[pos, 'in5'] += 1
-    elif np.equal(y_pred_idxs[5:], y_true_idx).any(): 
-        score_matrix.loc[pos, 'in10'] += 1
-    else: 
-        score_matrix.loc[pos, 'other'] += 1
+    score = np.argwhere(np.equal(y_pred_idxs, y_true_idx))
     
-    return score_matrix
+    # Here it can happen that it is not found, so we need workaround
+    if len(score) == 0:
+        score = 11 # so it gets in category 'other'
+    else:
+        score = int(score)
+    
+    return fill_in_results(pos, score, graph_map[ x_idx ].position[2], result)
 
 
 
-def evaluate_edge_graph(pos, x_emb, y_true, x_params, score_matrix, graph_edge_map, nn, nav_model, emb_model):
+def evaluate_edge_graph(pos, x_emb, y_true, x_params, result, graph_map, nn, nav_model, emb_model):
     # predicted distance 
     y_pred = np.squeeze(nav_model([x_emb.reshape(1,-1), x_params.reshape(1,-1)]))
     y_pred_dist = np.sum(np.square(y_pred - y_true))
     
     # all distances (sorted)
     start_id = int(np.squeeze(nn.kneighbors(x_emb.reshape(1,-1), 1, return_distance=False)))
-    target_ids = graph_edge_map[ start_id ].targets
+    node_data = graph_map[ start_id ]
     
+    target_ids = node_data.targets
     target_embs = np.squeeze(emb_model(target_ids),axis=1)
     assert y_true in target_embs
     
     dists = np.sort(np.sum(np.square(target_embs - y_pred), axis=1))
     assert len(dists) == len(target_embs) == len(target_ids)
     
-    # find score
+    # find score    
     score = int(np.argwhere(np.equal(dists, y_pred_dist)))
     
     # Fill abs_score_matrix
-    if score == 0: score_matrix.loc[pos, 'in1'] += 1
-    elif score == 1: score_matrix.loc[pos, 'in2'] += 1
-    elif score == 2: score_matrix.loc[pos, 'in3'] += 1
-    elif score < 5: score_matrix.loc[pos, 'in5'] += 1
-    elif score < 10: score_matrix.loc[pos, 'in10'] += 1
-    else: score_matrix.loc[pos, 'other'] += 1
-    
-    # Fill res_scores (do the 1- to let the best result be 1)
-    score_matrix.loc[pos, 'relative_score'] += 1 - score/len(target_embs)
-    score_matrix.loc[pos, 'num_edges'] += len(target_embs)
-    
-    return score_matrix
+    return fill_in_results(pos, score, node_data.position[2], result)
 
 
 
@@ -153,12 +140,12 @@ def evaluate_edge_graph(pos, x_emb, y_true, x_params, score_matrix, graph_edge_m
 
 def main(): 
     options = init_options_and_logger(get_navigation_training_dir(), 
-                                      os.path.join(get_root_dir(), "models/target_pred_navigator/navigation/"),
-                                      { 'evaluation_method': 'nn' })   
+                                      os.path.join(get_root_dir(), "models/target_pred_navigator_pre/"),
+                                      { 'evaluation_method': 'graph' })   
     
     assert options['evaluation_method'] == 'nn' or options['evaluation_method'] == 'graph'
     
-    embedding_dir = os.path.join(get_root_dir(), 'models/target_pred_navigator/embeddings/')
+    embedding_dir = os.path.join(get_root_dir(), 'models/embeddings/')
     embedding_info = extract_embedding_model(embedding_dir, options['embedding_dim'])
     options['embedding_file'] = embedding_info.path
     options['beampipe_split_z'] = embedding_info.bpsplit_z
@@ -228,6 +215,7 @@ def main():
     }
     
     model = build_feedforward_model(**model_params)
+    #model.summary()
     
     # Do the training    
     logging.info("Start training")
@@ -261,15 +249,15 @@ def main():
     nn.fit(np.squeeze(embedding_model(np.arange(total_node_num))))
     assert nn_index_matches_embedding_model(embedding_model, nn)
     
-    graph_edge_map = generate_graph_edge_map(prop_data, total_node_num)
+    graph_map = make_graph_map(prop_data, total_node_num)
     
     # Do the evaluation
     if options['evaluation_method'] == 'nn':
-        fig, axes, score = make_evaluation_plots(x_test_embs, y_test_embs, x_test_params, history.history,
-                                                 lambda a,b,c,d,e: evaluate_edge_nn(a,b,c,d,e,nn,model))
+        fig, axes, score = evaluate_and_plot(x_test_embs, x_test_params, y_test_embs, history.history,
+                                                 lambda a,b,c,d,e: evaluate_edge_nn(a,b,c,d,e,nn,model, graph_map))
     else: 
-        fig, axes, score = make_evaluation_plots(x_test_embs, y_test_embs, x_test_params, history.history,
-                                                 lambda a,b,c,d,e: evaluate_edge_graph(a,b,c,d,e,graph_edge_map,nn,
+        fig, axes, score = evaluate_and_plot(x_test_embs, x_test_params, y_test_embs, history.history,
+                                                 lambda a,b,c,d,e: evaluate_edge_graph(a,b,c,d,e,graph_map,nn,
                                                                                        model,embedding_model))
     
     # Add additional information to figure
@@ -299,19 +287,7 @@ def main():
     accuracy_string = "-acc{}".format(int(score*100))
     output_file = os.path.join(options['output_dir'], date_string + embedding_string + accuracy_string + eval_string)
     
-    if options['export']: 
-        model.save(output_file)
-        logging.info("Exported model to '%s'",output_file)
-    
-        fig.savefig(output_file + '.png')
-        logging.info("Exported chart to '%s.png'", output_file)
-        
-        with open(output_file + '.json','w') as conf_file:
-            json.dump(options, conf_file, indent=4)
-        logging.info("Exported configuration to '%s.json'", output_file)
-        
-    else:
-        logging.info("Would export to '%s'", output_file)
+    export_results(output_file, model, fig, options)
     
     
 if __name__ == "__main__":

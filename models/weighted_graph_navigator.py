@@ -13,7 +13,7 @@ from common.plot_embedding import *
 
 
 
-def evaluate_edge(pos, start, target, param, score_matrix, graph_edge_map):
+def evaluate_edge(pos, start, target, param, result, graph_map):
     '''
     Function which evaluates all metrics for a single edge in a track.
     It uses no model, but only the weight of an edge as a criterion
@@ -23,16 +23,16 @@ def evaluate_edge(pos, start, target, param, score_matrix, graph_edge_map):
     * start: a id representing the start surface
     * target: a id representing the target surface
     * param: <unused>
-    * score_matrix: a pandas df to fill in the results
-    * model: the model to predict the score of a tuple [start_surface, end_surface, params]
-    * graph_edge_map: a dictionary { start: namedtuple( targets, weights ) }
+    * result: named tuple EvaluationResult
+    * graph_map: a dictionary { start: namedtuple( targets, weights, real space position ) }
     
     Returns:
     * modified score_matrix (pandas dataframe)
     '''
+    node_data = graph_map[ start ]
     
-    targets = graph_edge_map[ start ].targets
-    weights = graph_edge_map[ start ].weights
+    targets = node_data.targets
+    weights = node_data.weights
     
     # sort targets by weights
     idxs = np.flip(np.argsort(weights))
@@ -42,18 +42,7 @@ def evaluate_edge(pos, start, target, param, score_matrix, graph_edge_map):
     correct_pos = int(np.argwhere(np.equal(targets,target)))
     
     # Fill abs_score_matrix
-    if correct_pos == 0: score_matrix.loc[pos, 'in1'] += 1
-    elif correct_pos == 1: score_matrix.loc[pos, 'in2'] += 1
-    elif correct_pos == 2: score_matrix.loc[pos, 'in3'] += 1
-    elif correct_pos < 5: score_matrix.loc[pos, 'in5'] += 1
-    elif correct_pos < 10: score_matrix.loc[pos, 'in10'] += 1
-    else: score_matrix.loc[pos, 'other'] += 1
-    
-    # Fill res_scores (do the 1- to let the best result be 1)
-    score_matrix.loc[pos, 'relative_score'] += 1 - correct_pos/len(targets)
-    score_matrix.loc[pos, 'num_edges'] += len(targets)
-    
-    return score_matrix
+    return fill_in_results(pos, correct_pos, node_data.position[2], result,  len(targets))
 
 
 
@@ -64,9 +53,6 @@ def evaluate_edge(pos, start, target, param, score_matrix, graph_edge_map):
 def main():
     options = init_options_and_logger(get_navigation_training_dir(),
                                       os.path.join(get_root_dir(), "models/weighted_graph_navigator/"))   
-    
-    embedding_dir = os.path.join(get_root_dir(), 'models/target_pred_navigator/embeddings/')
-    options['embedding_file'] = extract_embedding_model(embedding_dir, options['embedding_dim'])
 
     ###############
     # Import data #
@@ -83,10 +69,10 @@ def main():
     prop_data = geoid_to_ordinal_number(prop_data, detector_data, total_node_num)
     
     # Categorize into tracks (also needed for testing later)
-    tracks_start, track_params, tracks_end = categorize_into_tracks(prop_data, total_node_num, ['qop'])
+    tracks_start, track_params, tracks_end = categorize_into_tracks(prop_data, total_node_num, ['dir_x', 'dir_y', 'dir_z'])
     
     # Make graph
-    graph_edge_map = generate_graph_edge_map(prop_data, total_node_num)
+    graph_edge_map = make_graph_map(prop_data, total_node_num)
     
     logging.info("Imported %d tracks, the maximum sequence length is %d",
                  len(tracks_start), max([ len(track) for track in tracks_start ]))
@@ -96,14 +82,15 @@ def main():
     # Evaluation #
     ##############
     
-    fig, axes, score = make_evaluation_plots(tracks_start, tracks_end, track_params, {},
-                                             lambda a,b,c,d,e: evaluate_edge(a,b,c,d,e,graph_edge_map))
+    fig, axes, score = evaluate_and_plot(tracks_start, track_params, tracks_end, {},
+                                         lambda a,b,c,d,e: evaluate_edge(a,b,c,d,e,graph_edge_map))
     
     bpsplit_str = "bp split: z={}, phi={}".format(options['beampipe_split_z'],options['beampipe_split_phi'])
     fig.suptitle("Weighted Graph Nav: {}".format(bpsplit_str), fontweight='bold')
     fig.text(0,0,"Training data: " + options['propagation_file'])
     
-    plt.show()
+    if options['show']:
+        plt.show()
            
     ##########
     # Export #
