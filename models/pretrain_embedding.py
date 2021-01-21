@@ -1,10 +1,10 @@
 import os
 import sys
 import datetime
+import json
 import argparse
 import pprint
 import logging
-logging.basicConfig(format='[%(levelname)s] %(asctime)s: %(message)s',level=logging.INFO)
 
 from timeit import Timer
 
@@ -23,8 +23,10 @@ from common.misc import *
 
 def main():
     options = init_options_and_logger(get_embedding_training_dir(),
-                                      os.path.join(get_root_dir(), "models/target_pred_navigator/embeddings/"),
-                                      { 'prop_data_size': 128 })
+                                      os.path.join(get_root_dir(), "models/embeddings/"),
+                                      { 'prop_data_size': 128, 'batch_size': 16384, 'bpsplit_method': 'uniform' })
+    
+    assert options['bpsplit_method'] == 'uniform' or options['bpsplit_method'] == 'custom'
     
     ######################
     # PREPARE GRAPH DATA #
@@ -36,7 +38,13 @@ def main():
     total_beampipe_split = options['beampipe_split_z']*options['beampipe_split_phi']
     total_node_num = len(detector_data.index) - 1 + total_beampipe_split
 
-    graph_data = beampipe_split(graph_data, options['beampipe_split_z'], options['beampipe_split_phi'])        
+    if options['bpsplit_method'] == 'uniform':
+        graph_data = uniform_beampipe_split(graph_data, options['beampipe_split_z'], options['beampipe_split_phi'])  
+    else:
+        bp_z_coords = graph_data.loc[ graph_data['start_id'] == 0]['pos_z'].to_numpy()
+        custom_split_bounds = make_z_split_constant_density(bp_z_coords, options['beampipe_split_z'])
+        graph_data = custom_beampipe_split(graph_data, custom_split_bounds, options['beampipe_split_phi']) 
+        
     graph_data = geoid_to_ordinal_number(graph_data, detector_data, total_beampipe_split)
     
     connected_edges = np.unique(graph_data[['start_id', 'end_id']].to_numpy(), axis=0)
@@ -177,18 +185,28 @@ def main():
     date_string = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     embedding_string = "-emb{}".format(model_params['embedding_dim'])
     accuracy_string = "-acc{}".format(round(history.history['accuracy'][-1]*100))
-    bpsplit_z_string = "-bz{}".format(options['beampipe_split_z'])
+    bpsplit_z_string = "-bz{}".format(options['beampipe_split_z']) if options['bpsplit_method'] == 'uniform' else "-bzcust"
     bpsplit_phi_string = "-bp{}".format(options['beampipe_split_phi'])
-    output_filename = date_string + embedding_string + accuracy_string + bpsplit_z_string + bpsplit_phi_string
+    output_filename = os.path.join(options['output_dir'], 
+                                   date_string + embedding_string + accuracy_string + bpsplit_z_string + bpsplit_phi_string)
             
     if options['export']:
-        embedding_model.save(options['output_dir'] + output_filename)
-        logging.info("exported model to '" + options['output_dir'] + output_filename + "'")
+        if options['bpsplit_method'] == 'custom':
+            custom_bpsplit_filename = os.path.join( options['output_dir'], date_string + "-custom-zsplit.txt")
+            np.savetxt(custom_bpsplit_filename, custom_split_bounds)
+            logging.info("exported custom z-split to '" + custom_bpsplit_filename + "'")
         
-        fig.savefig(options['output_dir'] + output_filename + ".png")
-        logging.info("exported figure to '" + options['output_dir'] + output_filename + ".png'")
+        embedding_model.save(output_filename)
+        logging.info("exported model to '%s'", output_filename)
+        
+        fig.savefig(output_filename + ".png")
+        logging.info("exported figure to '%s'", output_filename)
+        
+        with open(output_filename + '.json','w') as conf_file:
+            json.dump(options, conf_file, indent=4)
+        logging.info("Exported configuration to '%s.json'", output_filename)
     else:
-        logging.info("would export model to '" + options['output_dir'] + output_filename + "'")
+        logging.info("would export model to '%s'", output_filename)
         
     
     

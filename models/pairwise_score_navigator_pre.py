@@ -132,7 +132,7 @@ def generate_train_data_with_false_simulated(true_samples_tracks, false_samples_
     
     # Import false samples
     prop_data_false = pd.read_csv(false_samples_file, dtype={'start_id': np.uint64, 'end_id': np.uint64})
-    prop_data_false, z_dist = beampipe_split(prop_data_false, bpsplit_z, bpsplit_phi)    
+    prop_data_false, z_dist = uniform_beampipe_split(prop_data_false, bpsplit_z, bpsplit_phi)    
     prop_data_false = geoid_to_ordinal_number(prop_data_false, detector_data, total_beampipe_split)
     false_samples_tracks = categorize_into_tracks(prop_data_false, total_beampipe_split, selected_params)
     
@@ -272,7 +272,7 @@ def main():
     
     # True samples
     prop_data_true = pd.read_csv(options['propagation_file'], dtype={'start_id': np.uint64, 'end_id': np.uint64})
-    prop_data_true, z_distribution = beampipe_split(prop_data_true, options['beampipe_split_z'], 
+    prop_data_true, z_distribution = uniform_beampipe_split(prop_data_true, options['beampipe_split_z'], 
                                                     options['beampipe_split_phi'], return_z_distribution=True)
     
     # Plot and save z bin distribution

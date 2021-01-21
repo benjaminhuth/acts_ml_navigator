@@ -9,6 +9,7 @@
 
 import os
 import logging
+import math
 import time
 import collections
 
@@ -31,9 +32,132 @@ def make_track_collection(start_ids, start_params, target_ids):
     TrackCollection = collections.namedtuple("TrackCollection", ["start_ids", "start_params", "target_ids"])
     return TrackCollection(start_ids, start_params, target_ids)
 
+
+
+def make_z_split_constant_density(z_coords, z_split):
+    '''
+    Generates a beampipe split with constant density along the z-axis. The result then must be used in 'custom_beampipe_split'.
+    
+    Parameters:
+    * z_coords: ndarray with shape (N,1)
+    * z_split
+    
+    Returns:
+    * ndarray witz z-split bounds
+    '''
+    assert len(z_coords.shape) == 1
+    
+    # How large is a bin?
+    z_coords = np.sort(z_coords)
+    n_per_bin = math.ceil(len(z_coords) / z_split)
+    assert n_per_bin > 1
+    
+    # Determine the bin boundaries
+    bounds = [ z_coords[0] ]
+    assert z_coords[0] == np.amin(z_coords)
+    
+    current_bin_size = 0
+    
+    for i in range(len(z_coords)):
+        if current_bin_size == n_per_bin:
+            bounds.append( z_coords[i-1] + ((z_coords[i-1] - z_coords[i]) / 2) )
+            current_bin_size = 0
+        
+        current_bin_size += 1
+    
+    # Add a small offset, so that < criterion holds
+    bounds.append( np.amax(z_coords)+0.01 )
+    
+    assert len(bounds) == z_split+1
+    
+    return np.array(bounds)
+    
+
+
+def custom_beampipe_split(prop_data, z_split, phi_split, return_z_distribution=False):
+    '''
+    Applys a custom z split, the phi-split remains uniform!
+    
+    Parameters:
+    * prop_data: dataframe with propagation data
+    * z_split: ndarray with split bounds
+    * phi_split: integer
+    * [OPT] return_z_distribution: do I want to return the z_distribution?
+    
+    Returns:
+    * dataframe: modified prop_data
+    * [OPT] z distribution tuple
+    '''
+    assert len(z_split) > 0 and phi_split > 0
+    assert np.amin( prop_data[ prop_data['start_id'] != 0 ]['start_id'].to_numpy() ) >= len(z_split)*phi_split
+    
+    # Do z split
+    bp_z_positions = prop_data[ prop_data['start_id'] == 0 ]['pos_z'].to_numpy()
+    
+    logging.debug("num z coords: %d", len(bp_z_positions))
+    
+    bp_new_ids = np.zeros(len(bp_z_positions), dtype=np.uint64)
+    
+    current_id = 0    
+    test_sum = 0
+    
+    # do not iterate over the last two elements, they are covered below
+    for i in range(len(z_split)-2):
+        mask = np.greater_equal(bp_z_positions, z_split[i]) & np.less(bp_z_positions, z_split[i+1])
+        test_sum += np.sum(mask)
+        bp_new_ids[ mask ] = current_id
+        
+        current_id += 1
+        
+        
+    # the rest is all what is greater then the second-last boundary
+    mask = np.greater(bp_z_positions, z_split[-2])
+    test_sum += np.sum(mask)
+    
+    bp_new_ids[ mask ] = current_id
+
+    assert test_sum == len(bp_new_ids)
+    assert current_id == len(z_split)-2
+    
+    # For conditional return
+    z_ids, z_ids_weights = np.unique(bp_new_ids, return_counts=True)
+        
+    # expand new ids so that there is space for phi-splitting
+    bp_new_ids *= phi_split
+    
+    # then do phi-splitting
+    bp_dir_x = prop_data[ prop_data['start_id'] == 0 ]['dir_x'].to_numpy()
+    bp_dir_y = prop_data[ prop_data['start_id'] == 0 ]['dir_y'].to_numpy()
+    
+    # get angle and normalize to [0, 2pi]
+    bp_phi_angles = np.arctan2(bp_dir_x, bp_dir_y) + np.pi
+    assert bp_phi_angles.all() >= 0 and bp_phi_angles.all() < 2*np.pi
+    
+    phi_bin_size = 2*np.pi / phi_split
+    
+    bp_new_ids += (bp_phi_angles / phi_bin_size).astype(np.uint64)
+    
+    prop_data.loc[ prop_data['start_id'] == 0, 'start_id'] = bp_new_ids
+    
+    # Update z positions of the new splitted tracks
+    # Use the fact, that ids with same z but different phi are next to each other
+    new_z_positions = z_split[:-1] + (np.diff(z_split) / 2)
+    low_z_bounds = np.arange(0, phi_split*(len(z_split)-1), phi_split)
+    high_z_bounds = low_z_bounds + phi_split
+    assert len(new_z_positions) == len(low_z_bounds) == len(high_z_bounds) == len(z_split)-1
+    
+    for low, high, new_pos in zip(low_z_bounds, high_z_bounds, new_z_positions):
+        logging.debug("the ids %s get new z coord %f", np.arange(low, high), new_pos)
+        prop_data.loc[ (prop_data['start_id'] >= low) & (prop_data['start_id'] < high), 'start_z' ] = new_pos
+    
+    if not return_z_distribution:
+        return prop_data
+    else:
+        return prop_data, (z_ids, z_ids_weights)
+
     
     
-def beampipe_split(prop_data, z_split, phi_split, return_z_distribution=False):
+def uniform_beampipe_split(prop_data, z_split, phi_split, return_z_distribution=False):
     '''
     Maps all GeoIDs which are 0 to new numbers in [0, z_split * phi_split], dependent on their track parameters. 
     
@@ -52,8 +176,6 @@ def beampipe_split(prop_data, z_split, phi_split, return_z_distribution=False):
     
     # Get z positions 
     bp_z_positions = prop_data[ prop_data['start_id'] == 0 ]['pos_z'].to_numpy()
-    
-    logging.debug("min_z = %f, max_z = %f", np.amin(bp_z_positions), np.amax(bp_z_positions))
     
     # Compute bin size. increase the z-range slightly to avoid border effects
     z_bin_size = ( np.amax(bp_z_positions) - np.amin(bp_z_positions) )*1.01 / z_split
@@ -87,7 +209,7 @@ def beampipe_split(prop_data, z_split, phi_split, return_z_distribution=False):
     new_z_positions = np.linspace(np.amin(bp_z_positions), np.amax(bp_z_positions), z_split, endpoint=False) + z_bin_size/2
     low_z_bounds = np.arange(0, phi_split*z_split, phi_split)
     high_z_bounds = low_z_bounds + phi_split
-    assert len(new_z_positions) == len(low_z_bounds) == len(high_z_bounds)
+    assert len(new_z_positions) == len(low_z_bounds) == len(high_z_bounds) == z_split
     
     for low, high, new_pos in zip(low_z_bounds, high_z_bounds, new_z_positions):
         logging.debug("the ids %s get new z coord %f", np.arange(low, high), new_pos)
@@ -273,39 +395,64 @@ if __name__ == "__main__":
     detector_file = root_dir + "detector/detector_surfaces.csv"
     
     prop_data = pd.read_csv(propagation_file, dtype={'start_id': np.uint64, 'end_id': np.uint64})
-    detector_data = pd.read_csv(detector_file, dtype={'geo_id': np.uint64})    
+    detector_data = pd.read_csv(detector_file, dtype={'geo_id': np.uint64})   
+    
+    z_split = 4
+    phi_split = 3
+    
+    ## Test alternative of custom beampipe split
+    def test_custom_beampipe_split():
+        z_coords = prop_data.loc[ prop_data['start_id'] == 0]['pos_z'].to_numpy()
+        split = make_z_split_constant_density(z_coords, z_split)
+        
+        _, z_dist = custom_beampipe_split(prop_data.copy(), split, phi_split, return_z_distribution=True)
+        
+        print("[ OK ] test_custom_beampipe_split(...)", flush=True)
+    
+    test_custom_beampipe_split()
     
     
     ## Step 1: Beampipe split
-    phi_split = 4
-    z_split = 3
-    step_1_res = beampipe_split(prop_data.copy(), z_split, phi_split)
+    def test_uniform_beampipe_split():
+        step_1_res = uniform_beampipe_split(prop_data.copy(), z_split, phi_split)
 
-    # NOTE this only works at small split sizes, so all are bins are filled
-    initial_num_unique_ids = len(np.unique(prop_data[['start_id','end_id']].to_numpy()))
-    step_1_num_unique_ids = len(np.unique(step_1_res[['start_id','end_id']].to_numpy()))
+        # NOTE this only works at small split sizes, so all are bins are filled
+        initial_num_unique_ids = len(np.unique(prop_data[['start_id','end_id']].to_numpy()))
+        step_1_num_unique_ids = len(np.unique(step_1_res[['start_id','end_id']].to_numpy()))
+        
+        assert initial_num_unique_ids - 1 + z_split*phi_split == step_1_num_unique_ids
+        
+        print("[ OK ] beampipe_split(...)", flush=True)
+        return step_1_res
     
-    assert initial_num_unique_ids - 1 + z_split*phi_split == step_1_num_unique_ids
-    print("[ OK ] beampipe_split(...)", flush=True)
+    step_1_res = test_uniform_beampipe_split()
     
     
     ## Step 2: GeoID -> Number
-    step_2_res = geoid_to_ordinal_number(step_1_res.copy(), detector_data, z_split*phi_split)
-    step_2_unique_ids = np.unique(step_1_res[['start_id','end_id']].to_numpy())
+    def test_geoid_to_ordinal_number():
+        step_2_res = geoid_to_ordinal_number(step_1_res.copy(), detector_data, z_split*phi_split)
+        step_2_unique_ids = np.unique(step_1_res[['start_id','end_id']].to_numpy())
+        
+        assert step_2_unique_ids.all() < len(step_2_unique_ids)
+        
+        print("[ OK ] geoid_to_ordinal_number(...)", flush=True)
+        return step_2_res
     
-    assert step_2_unique_ids.all() < len(step_2_unique_ids)
-    print("[ OK ] geoid_to_ordinal_number(...)", flush=True)
+    step_2_res = test_geoid_to_ordinal_number()
     
     
-    ## Step 3: Categorize into tracks    
-    selected_params = ['dir_x','dir_y','dir_z']
-    x_numbers, x_params, y_numbers = categorize_into_tracks(step_2_res.copy(), z_split*phi_split, selected_params)
-    
-    assert len(x_numbers) == len(x_params) == len(y_numbers)
-    
-    initial_sep_idxs = prop_data[prop_data['start_id'] == 0].index.to_numpy()
-    track_lengths_ref = np.array([len(track) for track in x_numbers])
-    track_lengths_check = np.append(np.diff(initial_sep_idxs), len(x_numbers[-1]))
-    assert np.equal(track_lengths_ref, track_lengths_check).all()
-    
-    print("[ OK ] categorize_into_tracks(...)", flush=True)
+    ## Step 3: Categorize into tracks   
+    def test_categorize_into_tracks():
+        selected_params = ['dir_x','dir_y','dir_z']
+        x_numbers, x_params, y_numbers = categorize_into_tracks(step_2_res.copy(), z_split*phi_split, selected_params)
+        
+        assert len(x_numbers) == len(x_params) == len(y_numbers)
+        
+        initial_sep_idxs = prop_data[prop_data['start_id'] == 0].index.to_numpy()
+        track_lengths_ref = np.array([len(track) for track in x_numbers])
+        track_lengths_check = np.append(np.diff(initial_sep_idxs), len(x_numbers[-1]))
+        assert np.equal(track_lengths_ref, track_lengths_check).all()
+        
+        print("[ OK ] categorize_into_tracks(...)", flush=True)
+
+    test_categorize_into_tracks()

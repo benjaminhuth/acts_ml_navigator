@@ -137,11 +137,11 @@ def main():
     total_node_num = len(detector_data.index) - 1 + total_beampipe_split
     selected_params = ['dir_x', 'dir_y', 'dir_z', 'qop']
     
-    prop_data_true = beampipe_split(prop_data_true, options['beampipe_split_z'], options['beampipe_split_phi'])
+    prop_data_true = uniform_beampipe_split(prop_data_true, options['beampipe_split_z'], options['beampipe_split_phi'])
     prop_data_true = geoid_to_ordinal_number(prop_data_true, detector_data, total_beampipe_split)
     true_tracks = categorize_into_tracks(prop_data_true, total_beampipe_split, selected_params)
     
-    prop_data_false = beampipe_split(prop_data_false, options['beampipe_split_z'], options['beampipe_split_phi'])
+    prop_data_false = uniform_beampipe_split(prop_data_false, options['beampipe_split_z'], options['beampipe_split_phi'])
     prop_data_false = geoid_to_ordinal_number(prop_data_false, detector_data, total_beampipe_split)
     false_tracks = categorize_into_tracks(prop_data_false, total_beampipe_split, selected_params)
     

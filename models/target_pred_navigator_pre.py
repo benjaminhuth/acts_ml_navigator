@@ -169,7 +169,7 @@ def main():
     #################    
     
     # Beampipe split and new mapping
-    prop_data = beampipe_split(prop_data, options['beampipe_split_z'], options['beampipe_split_phi'])
+    prop_data = uniform_beampipe_split(prop_data, options['beampipe_split_z'], options['beampipe_split_phi'])
     prop_data = geoid_to_ordinal_number(prop_data, detector_data, total_beampipe_split)
     
     # Categorize into tracks (also needed for testing later)
