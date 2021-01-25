@@ -18,8 +18,8 @@ from sklearn.model_selection import train_test_split
 from common.preprocessing import *
 from common.evaluation import *
 from common.misc import *
-from common.plot_embedding import *
 from common.pairwise_score_tools import *
+from plot_embedding import *
 
 ###############
 # Build model #
@@ -133,15 +133,17 @@ def main():
     prop_data_false = pd.read_csv(options['propagation_file_false'], dtype={'start_id': np.uint64, 'end_id': np.uint64})
     detector_data = pd.read_csv(options['detector_file'], dtype={'geo_id': np.uint64}) 
     
-    total_beampipe_split = options['beampipe_split_z']*options['beampipe_split_phi']
+    total_beampipe_split = options['bpsplit_z']*options['bpsplit_phi']
     total_node_num = len(detector_data.index) - 1 + total_beampipe_split
     selected_params = ['dir_x', 'dir_y', 'dir_z', 'qop']
     
-    prop_data_true = uniform_beampipe_split(prop_data_true, options['beampipe_split_z'], options['beampipe_split_phi'])
+    split_bounds = make_z_split(prop_data_true, options['bpsplit_method'], options['bpsplit_z'])
+    
+    prop_data_true = apply_beampipe_split(prop_data_true, split_bounds, options['bpsplit_phi'])
     prop_data_true = geoid_to_ordinal_number(prop_data_true, detector_data, total_beampipe_split)
     true_tracks = categorize_into_tracks(prop_data_true, total_beampipe_split, selected_params)
     
-    prop_data_false = uniform_beampipe_split(prop_data_false, options['beampipe_split_z'], options['beampipe_split_phi'])
+    prop_data_false = apply_beampipe_split(prop_data_false, split_bounds, options['bpsplit_phi'])
     prop_data_false = geoid_to_ordinal_number(prop_data_false, detector_data, total_beampipe_split)
     false_tracks = categorize_into_tracks(prop_data_false, total_beampipe_split, selected_params)
     
@@ -220,7 +222,7 @@ def main():
         
     # Summary title and data info 
     data_gen_str = "gen: simulated"
-    bpsplit_str = "bp split: z={}, phi={}".format(options['beampipe_split_z'],options['beampipe_split_phi'])
+    bpsplit_str = "bp split: z={}, phi={}".format(options['bpsplit_z'],options['bpsplit_phi'])
     
     arch_str = "arch: [ "
     for size, activation in zip(model_params['layers'], model_params['activations']):

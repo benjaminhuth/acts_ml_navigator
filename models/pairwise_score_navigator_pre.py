@@ -16,7 +16,6 @@ from sklearn.model_selection import train_test_split
 from common.preprocessing import *
 from common.evaluation import *
 from common.misc import *
-from common.plot_embedding import *
 from common.pairwise_score_tools import *
 
 
@@ -128,11 +127,18 @@ def generate_train_data_with_false_simulated(true_samples_tracks, false_samples_
     * a tuple: ([start_ids, target_ids, start_params], y)
     '''
     assert type(true_samples_tracks).__name__ == 'TrackCollection'
-    total_beampipe_split = bpsplit_z*bpsplit_phi
+    assert bpsplit_phi > 0
+    assert type(bpsplit_z) == list and len(bpsplit_z) > 1
+    
+    total_beampipe_split = (len(bpsplit_z)-1)*bpsplit_phi
     
     # Import false samples
     prop_data_false = pd.read_csv(false_samples_file, dtype={'start_id': np.uint64, 'end_id': np.uint64})
-    prop_data_false, z_dist = uniform_beampipe_split(prop_data_false, bpsplit_z, bpsplit_phi)    
+    prop_data_false, dist = apply_beampipe_split(prop_data_false, bpsplit_z, bpsplit_phi, return_z_distribution=True)
+    
+    logging.info("False sim data - beampipe split info: mean=(%.2f +- %.2f), max=%.2f, min=%.2f", 
+                 np.mean(dist[1]), np.std(dist[1]), np.amax(dist[1]), np.amin(dist[1]))
+    
     prop_data_false = geoid_to_ordinal_number(prop_data_false, detector_data, total_beampipe_split)
     false_samples_tracks = categorize_into_tracks(prop_data_false, total_beampipe_split, selected_params)
     
@@ -186,9 +192,7 @@ def generate_train_data_from_graph(true_samples_tracks, graph_edge_map, max_fals
         true_idx = int(np.argwhere(np.equal(targets, true_target)))
         
         if len(targets) < 2:
-            false_starts.append(start_id)
-            false_params.append(params)
-            false_targets.append(np.random.choice(true_targets)) # just a workaround, should not happen often in real data        
+            continue
         
         elif len(targets) == 2:
             false_starts.append(start_id)
@@ -250,13 +254,15 @@ def main():
     
     # Embedding import
     embedding_dir = os.path.join(get_root_dir(), 'models/embeddings/')
-    embedding_info = extract_embedding_model(embedding_dir, options['embedding_dim'])
+    embedding_info = extract_embedding_model(embedding_dir, options['embedding_dim'], options['bpsplit_z'],
+                                             options['bpsplit_phi'], options['bpsplit_method'])
+    
     options['embedding_file'] = embedding_info.path
-    options['beampipe_split_z'] = embedding_info.bpsplit_z
-    options['beampipe_split_phi'] = embedding_info.bpsplit_phi
+    options['bpsplit_z'] = embedding_info.bpsplit_z
+    options['bpsplit_phi'] = embedding_info.bpsplit_phi
     
     logging.info("imported embedding '%s' with beampipe split (%d,%d)", 
-                 options['embedding_file'], options['beampipe_split_z'], options['beampipe_split_phi'])
+                 os.path.basename(options['embedding_file']), len(options['bpsplit_z'])-1, options['bpsplit_phi'])
     
     
     ################
@@ -266,28 +272,28 @@ def main():
     # Detector and beampipe split
     detector_data = pd.read_csv(options['detector_file'], dtype={'geo_id': np.uint64}) 
     
-    total_beampipe_split = options['beampipe_split_z']*options['beampipe_split_phi']
+    total_beampipe_split = (len(options['bpsplit_z'])-1)*options['bpsplit_phi']
     total_node_num = len(detector_data.index) - 1 + total_beampipe_split
     selected_params = ['dir_x', 'dir_y', 'dir_z', 'qop']
     
     # True samples
     prop_data_true = pd.read_csv(options['propagation_file'], dtype={'start_id': np.uint64, 'end_id': np.uint64})
-    prop_data_true, z_distribution = uniform_beampipe_split(prop_data_true, options['beampipe_split_z'], 
-                                                    options['beampipe_split_phi'], return_z_distribution=True)
+    
+    # Beampipe split
+    prop_data_true, z_dist = apply_beampipe_split(prop_data_true, options['bpsplit_z'], 
+                                                  options['bpsplit_phi'], return_z_distribution=True)
+    
+    logging.info("beampipe split info: mean=(%.2f +- %.2f), max=%.2f, min=%.2f", np.mean(z_dist[1]),
+                 np.std(z_dist[1]), np.amax(z_dist[1]), np.amin(z_dist[1]))
     
     # Plot and save z bin distribution
-    # TODO Figure a way out how to do the beampipe splitting that is non-uniform, but respects the density
-    plt.plot(z_distribution[0], z_distribution[1])
+    plt.plot(z_dist[0], z_dist[1], ".-")
     plt.xlabel("z-bins")
     plt.ylabel("# of surfaces on z-bin")
-    plt.title("Surfaces per z-bin (z-split = {}, n={})".format(options['beampipe_split_z'], options['prop_data_size']))
+    plt.title("Surfaces per z-bin (z-split = {}, n={})".format(len(options['bpsplit_z'])-1, options['prop_data_size']))
+    
     if options['show']:
         plt.show()
-       
-    if options['export']:
-        z_dist_filename = "{}-zdist-n{}-pbz{}.png".format(datetime.datetime.now().strftime("%Y%m%d-%H%M%S"),
-                                                          options['prop_data_size'], options['beampipe_split_z'])
-        plt.savefig(os.path.join(options['output_dir'], z_dist_filename))
         
     # Do the rest of preprocessing
     prop_data_true = geoid_to_ordinal_number(prop_data_true, detector_data, total_beampipe_split)
@@ -306,7 +312,7 @@ def main():
     
     if options['data_gen_method'] == 'false_sim':
         x_train, y_train = generate_train_data_with_false_simulated(train_tracks, options['propagation_file_false'],
-                                                                    options['beampipe_split_z'], options['beampipe_split_phi'],
+                                                                    options['bpsplit_z'], options['bpsplit_phi'],
                                                                     detector_data, selected_params)
     else:
         x_train, y_train = generate_train_data_from_graph(train_tracks, graph_map, options['graph_gen_false_per_true'])    
@@ -382,7 +388,7 @@ def main():
     # Summary title and data info 
     data_gen_str = "gen: simulated" if options['data_gen_method'] == 'false_sim' else "gen: graph ({})".format(options['graph_gen_false_per_true'])
     
-    bpsplit_str = "bp split: z={}, phi={}".format(options['beampipe_split_z'],options['beampipe_split_phi'])
+    bpsplit_str = "bp split: z={}, phi={}".format(len(options['bpsplit_z'])-1,options['bpsplit_phi'])
     
     arch_str = "arch: [ "
     for size, activation in zip(model_params['layers'], model_params['activations']):
@@ -402,23 +408,13 @@ def main():
     ##########
     
     date_str   = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    method_str = "-sim"
+    method_str = "-graph" if options['data_gen_method'] == 'graph' else "-sim"
     size_str   = "-n{}".format(options['prop_data_size'])
     emb_str    = "-emb{}".format(options['embedding_dim'])
     acc_str    = "-acc{}".format(round(score*100))
     output_file = os.path.join(options['output_dir'], date_str + emb_str + method_str + size_str + acc_str)
 
-    export_results(output_file, navigation_model, fig, options)
-    
-    
-    # Create separate embedding model for plotting with reduced dimensionality
-    #input_node = tf.keras.Input(1)
-    #output_node = model.get_layer("embedding")(input_node)
-    
-    #embedding_model = tf.keras.Model(input_node,output_node)
-    
-    #plot_embedding(embedding_model, params['detector_file'], 3)
-    
+    export_results(output_file, navigation_model, fig, options)    
     
         
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ def parse_args_from_dictionary(dictionary):
     * dictionary: The modified dictionary
     '''
     
-    # Basic parsing (why special handling of bool necessary?)
+    # Add arguments (TODO why special handling of bool necessary?)
     parser = argparse.ArgumentParser()
     
     for key, value in dictionary.items():
@@ -37,15 +37,18 @@ def parse_args_from_dictionary(dictionary):
             parser.add_argument("--" + key, type=type(value))
             
     parser.add_argument("--show_config", action='store_true')
-        
+     
+    # Pars parameters
     args = vars(parser.parse_args())
     
+    # Handle 'show_config'
     if args['show_config'] == True:
         pprint.pprint(dictionary, width=2)
         exit(0)
         
     del args['show_config']
     
+    # Add args to dictionary
     num_args = 0
     for key, value in args.items():
         if value != None:
@@ -112,16 +115,24 @@ def init_options_and_logger(propagation_dir, output_dir, additional_options={}, 
     if not 'GPU' in tensorflow_devices and not options['disable_gpu']:
         logging.warning(">>> NO GPU AVAILABLE! <<<")
         
+    # Some assertions
+    assert options['bpsplit_method'] == 'uniform' or options['bpsplit_method'] == 'density'
+    assert os.path.exists(options['detector_file'])
+    assert os.path.exists(options['output_dir'])
+        
+    # Return the processed options
     return options
 
 
-def extract_embedding_model(embedding_dir, embedding_dim):
+def extract_embedding_model(embedding_dir, embedding_dim, bpsplit_z=None, bpsplit_phi=None, bp_method=None):
     '''
     Returns path to the best embedding model. Assumes that model directories are named like '20201217-185433-emb10-acc38'.
     
     Parameters:
-    * embedding_dir: Where to search for the models
-    * embedding_dim: which dimension we search
+    * embedding_dir (str): Where to search for the models
+    * embedding_dim (int): which dimension we search
+    * [OPT] bpsplit_z (int): If given, only accept with this beampipe split z
+    * [OPT] bpsplit_ph (int)i: If given, only accept with this beampipe split phi
     '''
     
     embedding_models = []
@@ -132,6 +143,7 @@ def extract_embedding_model(embedding_dir, embedding_dim):
     
     for entry in os.scandir(embedding_dir):        
         if entry.is_dir():
+            # Assert there exists a txt file for the z-split
             parts = entry.name.split('-')
             
             if len(parts) != 6:
@@ -142,14 +154,34 @@ def extract_embedding_model(embedding_dir, embedding_dim):
             if dim != embedding_dim:
                 continue
             
-            #acc = int(parts[3][3:])
-            bpsplit_z = int(parts[4][2:])
-            bpsplit_phi = int(parts[5][2:])
+            this_bpsplit_z = int(parts[4][2:-3])
             
-            embedding_models.append( EmbeddingInfo(entry.path, bpsplit_z, bpsplit_phi) )
+            if bpsplit_z != None and bpsplit_z != this_bpsplit_z:
+                continue
+            
+            this_bp_method = parts[4][-3:]
+            
+            if bp_method != None and this_bp_method != bp_method[0:3]:
+                continue
+            
+            this_bpsplit_phi = int(parts[5][2:])
+            
+            if bpsplit_phi != None and bpsplit_phi != this_bpsplit_phi:
+                continue
+            
+            bpsplit_z_file = os.path.join(embedding_dir, entry.name + ".txt")
+            assert os.path.exists(bpsplit_z_file)
+            
+            bpsplit_z_bounds = np.loadtxt(bpsplit_z_file).tolist()
+            
+            assert len(bpsplit_z_bounds) >= 2
+            assert len(bpsplit_z_bounds)-1 == this_bpsplit_z
+            
+            embedding_models.append( EmbeddingInfo(entry.path, bpsplit_z_bounds, this_bpsplit_phi) )
             
     if len(embedding_models) == 0:
-        logging.error("Could not find a matching embedding model to dim %d in '%s'", embedding_dim, embedding_dir)
+        logging.error("Could not find a matching embedding model (dim=%d, bpz=%sd, bpphi=%s, method=%s) in '%s'",
+                      embedding_dim, bpsplit_z, bpsplit_phi, bp_method, embedding_dir)
         exit(1)
     
     # filenames should be sorted from worst->best

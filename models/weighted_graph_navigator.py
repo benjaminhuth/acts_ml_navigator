@@ -9,7 +9,6 @@ import matplotlib.pyplot as plt
 from common.preprocessing import *
 from common.evaluation import *
 from common.misc import *
-from common.plot_embedding import *
 
 
 
@@ -61,11 +60,12 @@ def main():
     detector_data = pd.read_csv(options['detector_file'], dtype={'geo_id': np.uint64})
     prop_data = pd.read_csv(options['propagation_file'], dtype={'start_id': np.uint64, 'end_id': np.uint64})
     
-    total_beampipe_split = options['beampipe_split_z']*options['beampipe_split_phi']
+    total_beampipe_split = options['bpsplit_z']*options['bpsplit_phi']
     total_node_num = len(detector_data.index) - 1 + total_beampipe_split
     
     # Beampipe split and new mapping
-    prop_data = uniform_beampipe_split(prop_data, options['beampipe_split_z'], options['beampipe_split_phi'])
+    z_split = make_z_split(prop_data, options['bpsplit_method'], options['bpsplit_z'])
+    prop_data = apply_beampipe_split(prop_data, z_split, options['bpsplit_phi'])
     prop_data = geoid_to_ordinal_number(prop_data, detector_data, total_node_num)
     
     # Categorize into tracks (also needed for testing later)
@@ -85,7 +85,7 @@ def main():
     fig, axes, score = evaluate_and_plot(tracks_start, track_params, tracks_end, {},
                                          lambda a,b,c,d,e: evaluate_edge(a,b,c,d,e,graph_edge_map))
     
-    bpsplit_str = "bp split: z={}, phi={}".format(options['beampipe_split_z'],options['beampipe_split_phi'])
+    bpsplit_str = "bp split: z={}, phi={}".format(options['bpsplit_z'],options['bpsplit_phi'])
     fig.suptitle("Weighted Graph Nav: {}".format(bpsplit_str), fontweight='bold')
     fig.text(0,0,"Training data: " + options['propagation_file'])
     

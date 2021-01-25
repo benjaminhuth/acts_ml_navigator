@@ -146,13 +146,14 @@ def main():
     assert options['evaluation_method'] == 'nn' or options['evaluation_method'] == 'graph'
     
     embedding_dir = os.path.join(get_root_dir(), 'models/embeddings/')
-    embedding_info = extract_embedding_model(embedding_dir, options['embedding_dim'])
+    embedding_info = extract_embedding_model(embedding_dir, options['embedding_dim'], options['bpsplit_z'],
+                                             options['bpsplit_phi'], options['bpsplit_method'])
     options['embedding_file'] = embedding_info.path
-    options['beampipe_split_z'] = embedding_info.bpsplit_z
-    options['beampipe_split_phi'] = embedding_info.bpsplit_phi
+    options['bpsplit_z'] = embedding_info.bpsplit_z
+    options['bpsplit_phi'] = embedding_info.bpsplit_phi
     
     logging.info("Imported embedding '%s'", options['embedding_file'])
-    logging.info("Beampipe split set by embedding is (%d,%d)", options['beampipe_split_z'], options['beampipe_split_phi'])
+    logging.info("Beampipe split set by embedding is (%d,%d)", (len(options['bpsplit_z'])-1), options['bpsplit_phi'])
 
     ########################
     # Import training data #
@@ -161,7 +162,7 @@ def main():
     detector_data = pd.read_csv(options['detector_file'], dtype={'geo_id': np.uint64})
     prop_data = pd.read_csv(options['propagation_file'], dtype={'start_id': np.uint64, 'end_id': np.uint64})
     
-    total_beampipe_split = options['beampipe_split_z']*options['beampipe_split_phi']
+    total_beampipe_split = (len(options['bpsplit_z'])-1)*options['bpsplit_phi']
     total_node_num = len(detector_data.index) - 1 + total_beampipe_split
     
     #################
@@ -169,7 +170,7 @@ def main():
     #################    
     
     # Beampipe split and new mapping
-    prop_data = uniform_beampipe_split(prop_data, options['beampipe_split_z'], options['beampipe_split_phi'])
+    prop_data = apply_beampipe_split(prop_data, options['bpsplit_z'], options['bpsplit_phi'])
     prop_data = geoid_to_ordinal_number(prop_data, detector_data, total_beampipe_split)
     
     # Categorize into tracks (also needed for testing later)
@@ -261,7 +262,7 @@ def main():
                                                                                        model,embedding_model))
     
     # Add additional information to figure
-    bpsplit_str = "bp split: ({}, {})".format(options['beampipe_split_z'],options['beampipe_split_phi'])
+    bpsplit_str = "bp split: ({}, {})".format((len(options['bpsplit_z'])-1),options['bpsplit_phi'])
     
     arch_str = "arch: [ "
     for size, activation in zip(model_params['hidden_layers'], model_params['activations']):

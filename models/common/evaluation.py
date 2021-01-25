@@ -149,10 +149,11 @@ def evaluate_and_plot(tracks_edges_start, tracks_params, tracks_edges_target, hi
     # Initialize the result
     EvaluationResult = collections.namedtuple("EvaluationResult", ["score_matrix", "beampipe_scores"])
     
+    columns = ['in1','in2','in3','in5','in10','other','num_edges','num_edges_max','num_edges_min','relative_score']
     result = EvaluationResult(
-        pd.DataFrame(data = np.zeros((max_track_length, 8)),
+        pd.DataFrame(data = np.zeros((max_track_length, len(columns))),
                      index=np.arange(max_track_length),
-                     columns=['in1','in2','in3','in5','in10','other','num_edges','relative_score']),
+                     columns=columns),
         { 'in1': [], 'in2': [], 'in3': [], 'in5': [], 'in10': [], 'other': [] }
     )
     
@@ -244,13 +245,13 @@ def evaluate_and_plot(tracks_edges_start, tracks_params, tracks_edges_target, hi
     ax[0,2].set_xlabel("score bins")
     ax[0,2].set_ylabel("absolute score")
     ax[0,2].set_ylim([0,1])
-    ax[0,2].legend(result.score_matrix.columns.tolist())
+    ax[0,2].legend(columns)
     
     # Plot distribution per track pos
     current = np.zeros(max_track_length)
     for i, (name, series) in enumerate(result.score_matrix[['in1','in2','in3','in5','in10','other']].iteritems()):
         # dont plot 'other'
-        if i == len(result.score_matrix.columns)-3:
+        if columns[i] == 'other':
             break
         
         current += series.to_numpy() / hits_per_pos
@@ -260,7 +261,7 @@ def evaluate_and_plot(tracks_edges_start, tracks_params, tracks_edges_target, hi
     ax[1,0].set_xlabel("track position")
     ax[1,0].set_ylabel("score")
     ax[1,0].set_ylim([0,1.1])
-    ax[1,0].legend(result.score_matrix.columns.tolist()[:-1])
+    ax[1,0].legend(columns)
         
     # Plot beampipe score historgram
     hist_data = np.array([ result.beampipe_scores[k] for k in result.beampipe_scores.keys() ], dtype=object)
@@ -273,9 +274,12 @@ def evaluate_and_plot(tracks_edges_start, tracks_params, tracks_edges_target, hi
     # Plot possible edges per track pos
     ax[1,2].set_title("Mean graph edges per track position")
     ax[1,2].set_xlabel("track position")
-    ax[1,2].set_ylabel("mean #edges")
+    ax[1,2].set_ylabel("edges")
     if not result.score_matrix['num_edges'].to_numpy().all() == 0:
         ax[1,2].plot(result.score_matrix['num_edges'].to_numpy())
+        ax[1,2].plot(result.score_matrix['num_edges_max'].to_numpy())
+        ax[1,2].plot(result.score_matrix['num_edges_min'].to_numpy())
+        ax[1,2].legend(['mean', 'max', 'min'])
     else:
         ax[1,2].text(0.2,0.5,"no relative_score to plot")
     
@@ -321,5 +325,10 @@ def fill_in_results(pos_in_track, score, surface_z_coord, result, num_targets=No
     if num_targets != None:
         result.score_matrix.loc[pos_in_track, 'num_edges'] += num_targets
         result.score_matrix.loc[pos_in_track, 'relative_score'] += 1 - score/num_targets
+        
+        result.score_matrix.loc[pos_in_track, 'num_edges_max'] = \
+            max(result.score_matrix.loc[pos_in_track, 'num_edges_max'], num_targets)
+        result.score_matrix.loc[pos_in_track, 'num_edges_min'] = \
+            min(result.score_matrix.loc[pos_in_track, 'num_edges_min'], num_targets)
     
     return result
