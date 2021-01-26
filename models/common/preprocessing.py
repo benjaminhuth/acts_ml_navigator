@@ -71,6 +71,9 @@ def make_constant_density_z_split(z_coords, z_split):
     
     assert len(bounds) <= z_split+1 and len(bounds) >= len(z_coords) // n_per_bin
     
+    if not np.array_equal(bounds, np.unique(bounds)):
+        logging.warning("split bounds are not unique! This may cause an error later on!")
+    
     return np.array(bounds)
     
 
@@ -93,6 +96,9 @@ def make_uniform_z_split(z_coords, z_split):
 
     # criterion: all >= min && all < max
     bounds[-1] += 0.01
+    
+    if not np.array_equal(bounds, np.unique(bounds)):
+        logging.warning("split bounds are not unique! This may cause an error later on!")
     
     return bounds
 

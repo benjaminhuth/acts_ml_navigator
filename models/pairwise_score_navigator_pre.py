@@ -54,7 +54,7 @@ def build_model(embedding_dim, layers, activations, learning_rate):
         optimizer=tf.keras.optimizers.Adam(learning_rate=learning_rate), 
         loss=tf.keras.losses.BinaryCrossentropy(),
         metrics=[tf.keras.metrics.Accuracy(), tf.keras.metrics.BinaryAccuracy()],
-        run_eagerly=True
+        #run_eagerly=True
     )
     
     return model
@@ -362,7 +362,7 @@ def main():
         validation_split=options['validation_split'],
         verbose=2,
         callbacks=[
-            #tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=10, restore_best_weights=True),
+            tf.keras.callbacks.EarlyStopping(monitor='val_loss', patience=20, restore_best_weights=True),
             RemainingTimeEstimator(options['epochs']),
         ]
     )
