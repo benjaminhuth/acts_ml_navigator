@@ -37,6 +37,7 @@ build
 # KDevelop project files
 *.kdev4
 .kdev4
+*.kate-swp
 
 # Python
 __pycache__
@@ -48,3 +49,6 @@ data/models/
 
 # Acts
 timing.tsv
+
+# All kinds of simple text files
+*.txt
