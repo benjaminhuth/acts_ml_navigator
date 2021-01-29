@@ -29,10 +29,10 @@ elseif(${GCC})
 endif()
 
 # Sanitizers enabled on Debug-mode
-if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND (${GCC} OR ${CLANG}) )
-    add_compile_options("-fsanitize=address,leak,undefined")
-    add_link_options("-fsanitize=address,leak,undefined")
-endif()
+#if(CMAKE_BUILD_TYPE STREQUAL "Debug" AND (${GCC} OR ${CLANG}) )
+    #add_compile_options("-fsanitize=address,leak,undefined")
+    #add_link_options("-fsanitize=address,leak,undefined")
+#endif()
 
 # Boost
 find_package(Boost 1.69 MODULE REQUIRED COMPONENTS program_options)

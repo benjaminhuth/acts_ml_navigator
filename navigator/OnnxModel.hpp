@@ -6,7 +6,7 @@
 
 ///
 /// 
-template<int numInputs, int numOutputs>
+template<int NumInputs, int NumOutputs>
 class OnnxModel
 {    
     template<int D>
@@ -14,11 +14,11 @@ class OnnxModel
 
     std::unique_ptr<Ort::Session> m_session;
     
-    std::array<const char*, numInputs> m_inputNodeNames;
-    std::array<std::vector<int64_t>, numInputs> m_inputNodeDims;
+    std::array<const char*, NumInputs> m_inputNodeNames;
+    std::array<std::vector<int64_t>, NumInputs> m_inputNodeDims;
     
-    std::array<const char*, numOutputs> m_outputNodeNames;
-    std::array<std::vector<int64_t>, numOutputs> m_outputNodeDims;
+    std::array<const char*, NumOutputs> m_outputNodeNames;
+    std::array<std::vector<int64_t>, NumOutputs> m_outputNodeDims;
     
 public:
     /// @param env the ONNX runtime environment
@@ -37,13 +37,13 @@ public:
 
         Ort::AllocatorWithDefaultOptions allocator;
 
-        if( m_session->GetInputCount() != numInputs || m_session->GetOutputCount() != numOutputs )
-            throw std::invalid_argument("Input model must have exactely 2 inputs and 1 output");
+        if( m_session->GetInputCount() != NumInputs || m_session->GetOutputCount() != NumOutputs )
+            throw std::invalid_argument("Input or Output dimension mismatch");
 
         //////////////////
         // Handle inputs
         //////////////////
-        for (size_t i = 0; i < numInputs; ++i) 
+        for (size_t i = 0; i < NumInputs; ++i) 
         {
             m_inputNodeNames[i] = m_session->GetInputName(i, allocator);
 
@@ -61,7 +61,7 @@ public:
         //////////////////
         // Handle outputs
         //////////////////
-        for (auto i=0ul; i < numOutputs; ++i)
+        for (auto i=0ul; i < NumOutputs; ++i)
         {        
             m_outputNodeNames[i] = m_session->GetOutputName(0, allocator);
 
@@ -81,37 +81,44 @@ public:
 
     /// @brief Run the ONNX inference function
     template<typename InTuple, typename OutTuple>
-    void predict(OutTuple &outputVectors, const InTuple &inputVectors) const
+    void predict(OutTuple &outputVectors, InTuple &inputVectors) const
     {
-        static_assert( std::tuple_size_v<OutTuple> + std::tuple_size_v<InTuple> == numInputs + numOutputs );
+        static_assert( std::tuple_size_v<OutTuple> == NumOutputs );
+        static_assert( std::tuple_size_v<InTuple> == NumInputs );
         
-        // Helper functions
-        auto vectorToTensor = [](auto &tensor, const auto &vector, const auto &shape, const auto &memInfo)
-        {
-            tensor = Ort::Value::CreateTensor<float>(memInfo, vector.data(), vector.size(), shape.data(), shape.size());
-        };
-        
-        auto tensorToVector = [](auto &vector, const auto &tensor, const std::size_t size)
-        {
-            const float *data = tensor.template GetTensorData<float>();
-            
-            for(auto i = 0ul; i<size; ++i)
-                vector[i] = data[i];
-        };
+        std::apply([]<typename... Ts>(Ts...){ static_assert( std::conjunction_v<std::is_same<float, typename Ts::Scalar>...> ); }, outputVectors);
+        std::apply([]<typename... Ts>(Ts...){ static_assert( std::conjunction_v<std::is_same<float, typename Ts::Scalar>...> ); }, inputVectors);
         
         // Init memory Info
         Ort::MemoryInfo memInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
         
-        // Allocate Tensors
-        std::array<Ort::Value, std::tuple_size_v<InTuple>> inputTensors;
-        std::array<Ort::Value, std::tuple_size_v<OutTuple>> outputTensors;
+        // Helper function
+        auto make_tensor = [&](auto &vector, auto &shape)
+        {                
+            return Ort::Value::CreateTensor<float>(memInfo, vector.data(), static_cast<std::size_t>(vector.size()),
+                                                   shape.data(), shape.size());
+        };
         
-        // Set input tensors
-        std::apply([&, i=0](const auto &... vector) mutable
+        auto fill_input_tensors = [&]<std::size_t... I>(std::index_sequence<I...>)
         {
-            ( (vectorToTensor(inputTensors[i], vector, m_inputNodeDims[i++], memInfo)), ... );
-        },
-        inputVectors);
+            return std::array<Ort::Value, NumInputs>
+            {
+                make_tensor(std::get<I>(inputVectors), std::get<I>(m_inputNodeDims))...
+            };
+        };
+        
+
+        auto fill_output_tensors = [&]<std::size_t... I>(std::index_sequence<I...>)
+        {
+            return std::array<Ort::Value, NumOutputs>
+            {
+                make_tensor(std::get<I>(outputVectors), std::get<I>(m_outputNodeDims))...
+            };
+        };
+        
+        // Create Tensors        
+        auto inputTensors = fill_input_tensors(std::make_index_sequence<NumInputs>());
+        auto outputTensors = fill_output_tensors(std::make_index_sequence<NumOutputs>());
         
         // Run model
         m_session->Run(Ort::RunOptions{nullptr}, m_inputNodeNames.data(),
@@ -120,14 +127,7 @@ public:
                        outputTensors.data(), outputTensors.size());
         
         // double-check that outputTensors contains Tensors
-        if( !std::all_of(outputTensors.begin(), outputTensors.end(), [](auto &a){ return a.isTensor(); }) )
+        if( !std::all_of(outputTensors.begin(), outputTensors.end(), [](auto &a){ return a.IsTensor(); }) )
             throw std::runtime_error("runONNXInference: calculation of output failed. ");
-
-            
-        std::apply([&, i=0](const auto &... vector) mutable
-        {
-            ( (tensorToVector(vector, outputTensors[i], m_outputNodeDims[i++][1])), ... );
-        },
-        outputVectors);
     }
 };

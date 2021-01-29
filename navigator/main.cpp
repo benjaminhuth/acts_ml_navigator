@@ -35,6 +35,17 @@ int main(int argc, char **argv)
     ActsExamples::Options::addRandomNumbersOptions(desc);
     ActsExamples::Options::addPropagationOptions(desc);
     ActsExamples::Options::addOutputOptions(desc);
+    
+    
+    desc.add_options()("nav_model", 
+                       boost::program_options::value<std::string>(), 
+                       "path of a ONNX Model for navigation")
+                      ("graph_data", 
+                       boost::program_options::value<std::string>(), 
+                       "path to the propgagation log from which the graph is built")
+                      ("bpsplit_z", 
+                       boost::program_options::value<std::string>(),
+                       "path to the beampipe split file");
 
     // Add specific options for this geometry
     detector.addOptions(desc);
@@ -63,10 +74,16 @@ int main(int argc, char **argv)
         std::make_shared<ActsExamples::RandomNumbers>(randomNumberSvcCfg);
 
     // Navigator
-    Acts::Navigator navigator(tGeometry);
+//     Acts::Navigator navigator(tGeometry);
     
+    AllINeedForMLNavigation n{
+        std::make_shared<OnnxModel<3,1>>(Ort::Env(ORT_LOGGING_LEVEL_WARNING, "navigation_model"), vm["nav_model"].as<std::string>()),
+        tGeometry,
+        parseGraphFromCSV(vm["graph_data"].as<std::string>(), *tGeometry),
+        loadBPSplitZBounds(vm["bpsplit_z"].as<std::string>())
+    };
     
-    MLNavigator navigator2({ "here should be the path", "another path" });
+    MLNavigator navigator(n);
     
     // Magnetic Field
     auto bFieldVar = ActsExamples::Options::readBField(vm);
@@ -78,32 +95,17 @@ int main(int argc, char **argv)
         Acts::SharedBField<field_type> fieldMap(bField);
         using field_map_type = decltype(fieldMap);
         
-        using EStepper = Acts::EigenStepper<field_map_type>;
-        using AStepper = Acts::AtlasStepper<field_map_type>;
-        using SStepper = Acts::StraightLineStepper;
-        std::optional<std::variant<EStepper, AStepper, SStepper>> var_stepper;
+        using Stepper = Acts::EigenStepper<field_map_type>;
 
-        // translate option to variant
-        if (vm["prop-stepper"].template as<int>() == 0)
-            var_stepper = Acts::StraightLineStepper{};
-        else if (vm["prop-stepper"].template as<int>() == 1)
-            var_stepper = Acts::EigenStepper<field_map_type>{std::move(fieldMap)};
-        else if (vm["prop-stepper"].template as<int>() == 2)
-            var_stepper = Acts::AtlasStepper<field_map_type>{std::move(fieldMap)};
+        Stepper stepper{std::move(fieldMap)};
 
-        // resolve stepper, setup propagator
-        std::visit([&](auto& stepper) 
-        {
-            using Stepper = std::decay_t<decltype(stepper)>;
-            using Propagator = Acts::Propagator<Stepper, Acts::Navigator>;
-            Propagator propagator(std::move(stepper), std::move(navigator));
+        using Propagator = Acts::Propagator<Stepper, MLNavigator>;
+        Propagator propagator(std::move(stepper), std::move(navigator));
 
-            // Read the propagation config and create the algorithms
-            auto pAlgConfig = ActsExamples::Options::readPropagationConfig(vm, propagator);
-            pAlgConfig.randomNumberSvc = randomNumberSvc;
-            sequencer.addAlgorithm(std::make_shared<ActsExamples::PropagationAlgorithm<Propagator>>(pAlgConfig, logLevel));
-        },
-        *var_stepper);
+        // Read the propagation config and create the algorithms
+        auto pAlgConfig = ActsExamples::Options::readPropagationConfig(vm, propagator);
+        pAlgConfig.randomNumberSvc = randomNumberSvc;
+        sequencer.addAlgorithm(std::make_shared<ActsExamples::PropagationAlgorithm<Propagator>>(pAlgConfig, logLevel));
     },
     bFieldVar);
     
