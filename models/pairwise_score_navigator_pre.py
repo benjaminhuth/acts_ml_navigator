@@ -17,6 +17,7 @@ from common.preprocessing import *
 from common.evaluation import *
 from common.misc import *
 from common.pairwise_score_tools import *
+from common.real_space_embedding import *
 
 
 
@@ -261,8 +262,11 @@ def main():
     options['bpsplit_z'] = embedding_info.bpsplit_z
     options['bpsplit_phi'] = embedding_info.bpsplit_phi
     
-    logging.info("imported embedding '%s' with beampipe split (%d,%d)", 
-                 os.path.basename(options['embedding_file']), len(options['bpsplit_z'])-1, options['bpsplit_phi'])
+    logging.info("imported embedding '%s' with beampipe split (%d,%d)",
+                    os.path.basename(options['embedding_file']), len(options['bpsplit_z'])-1, options['bpsplit_phi'])
+    
+    if options['use_real_space_as_embedding']:
+        logging.warning("Imported embedding will NOT be used, instead a real-space embedding with the imported beampipe split")
     
     
     ################
@@ -287,13 +291,13 @@ def main():
                  np.std(z_dist[1]), np.amax(z_dist[1]), np.amin(z_dist[1]))
     
     # Plot and save z bin distribution
-    plt.plot(z_dist[0], z_dist[1], ".-")
-    plt.xlabel("z-bins")
-    plt.ylabel("# of surfaces on z-bin")
-    plt.title("Surfaces per z-bin (z-split = {}, n={})".format(len(options['bpsplit_z'])-1, options['prop_data_size']))
+    #plt.plot(z_dist[0], z_dist[1], ".-")
+    #plt.xlabel("z-bins")
+    #plt.ylabel("# of hits on z-bin")
+    #plt.title("Hits per z-bin (z-split = {}, n={})".format(len(options['bpsplit_z'])-1, options['prop_data_size']))
     
-    if options['show']:
-        plt.show()
+    #if options['show']:
+        #plt.show()
         
     # Do the rest of preprocessing
     prop_data_true = geoid_to_ordinal_number(prop_data_true, detector_data, total_beampipe_split)
@@ -307,6 +311,9 @@ def main():
     # Build graph (needed for testing/scoring/ data generation)
     graph_map = make_graph_map(prop_data_true, total_node_num)
     
+    #for i in range(total_node_num):
+        #graph_map[i]
+    
     # Generate training data structure
     x_train = y_train = None
     
@@ -315,7 +322,7 @@ def main():
                                                                     options['bpsplit_z'], options['bpsplit_phi'],
                                                                     detector_data, selected_params)
     else:
-        x_train, y_train = generate_train_data_from_graph(train_tracks, graph_map, options['graph_gen_false_per_true'])    
+        x_train, y_train = generate_train_data_from_graph(train_tracks, graph_map, options['graph_gen_false_per_true'])
     
     # Shuffle
     idxs = np.arange(len(y_train))
@@ -330,8 +337,16 @@ def main():
     assert x_train[0].all() >= 0
     
     # Apply embedding
-    embedding_model = tf.keras.models.load_model(options['embedding_file'], compile=False)
-    assert options['embedding_dim'] == np.squeeze(embedding_model(0)).shape[0]
+    if not options['use_real_space_as_embedding']:
+        embedding_model = tf.keras.models.load_model(options['embedding_file'], compile=False)
+        assert options['embedding_dim'] == np.squeeze(embedding_model(0)).shape[0]
+        logging.info("Successfull loaded embedding model with emb_dim %d", options['embedding_dim']);
+    else:
+        embedding_model = make_real_space_embedding_model(detector_data, options['bpsplit_z'], options['bpsplit_phi'])
+        options['embedding_dim'] = 3  
+        logging.info("Created dummy model which models real space positions (though emb_dim=%d)", options['embedding_dim']);
+        
+    
     
     x_train[0] = np.squeeze(embedding_model(x_train[0]))
     x_train[1] = np.squeeze(embedding_model(x_train[1]))
@@ -379,7 +394,7 @@ def main():
     # Build nn index matching the embedding model
     nn = NearestNeighbors()
     nn.fit(np.squeeze(embedding_model(np.arange(total_node_num))))
-    assert nn_index_matches_embedding_model(embedding_model, nn)
+    assert nn_index_matches_embedding_model(embedding_model, nn, is_keras_model=not options['use_real_space_as_embedding'])
         
     fig, axes, score = \
         evaluate_and_plot(test_start_ids, test_tracks.start_params, test_target_ids, history.history,

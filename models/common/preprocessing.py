@@ -127,6 +127,22 @@ def make_z_split(prop_data, method, z_split):
 
 
 
+def positions_from_bounds(bounds):
+    '''
+    Computes the resulting positions from the bounds
+    
+    Parameters:
+    * ndarray/list with n bounds
+    
+    Returns:
+    * ndarray with n-1 positions
+    '''
+    assert len(bounds) >= 2
+    
+    return bounds[:-1] + (np.diff(bounds) / 2)
+
+
+
 
 def apply_beampipe_split(prop_data, z_split, phi_split, return_z_distribution=False):
     '''
@@ -198,7 +214,7 @@ def apply_beampipe_split(prop_data, z_split, phi_split, return_z_distribution=Fa
     
     # Update z positions of the new splitted tracks
     # Use the fact, that ids with same z but different phi are next to each other
-    new_z_positions = z_split[:-1] + (np.diff(z_split) / 2)
+    new_z_positions = positions_from_bounds(z_split)
     low_z_bounds = np.arange(0, phi_split*(len(z_split)-1), phi_split)
     high_z_bounds = low_z_bounds + phi_split
     assert len(new_z_positions) == len(low_z_bounds) == len(high_z_bounds) == len(z_split)-1

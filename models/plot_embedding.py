@@ -58,19 +58,29 @@ def plot_embedding(model, detector_file, reduced_dimension, total_beampipe_split
     logging.info("Computed embeddings, shape: %s",embeddings.shape)
 
     # Apply TSNE
-    logging.info("Start TSNE dimension reduction (%d -> %d)",embeddings.shape[1],reduced_dimension)
-    embeddings_reduced = TSNE(n_components=reduced_dimension,n_jobs=20).fit_transform(embeddings)
-    logging.info("Done, shape of reduced embeddings: %s",embeddings_reduced.shape)
+    if embeddings.shape[1] > reduced_dimension:
+        logging.info("Start TSNE dimension reduction (%d -> %d)",embeddings.shape[1],reduced_dimension)
+        embeddings = TSNE(n_components=reduced_dimension,n_jobs=20).fit_transform(embeddings)
     
-    data['x'] = embeddings_reduced[:,0]
-    data['y'] = embeddings_reduced[:,1]
+    elif embeddings.shape[1] == reduced_dimension:
+        logging.info("No TSNE reduction necessary, target dimension matches embedding dimension")
+    
+    else:
+        logging.error("Embedding dimension not valid!")
+        exit(1)
+        
+    logging.info("Done, shape of reduced embeddings: %s",embeddings.shape)
+    
+    # Plot
+    data['x'] = embeddings[:,0]
+    data['y'] = embeddings[:,1]
         
     if reduced_dimension == 2:
         fig = px.scatter(data, x='x', y='y', color='volume', color_discrete_sequence=list(color_map.values()))
         fig.show()
     
     elif reduced_dimension == 3:
-        data['z'] = embeddings_reduced[:,2]
+        data['z'] = embeddings[:,2]
         fig = px.scatter_3d(data, x='x', y='y', z='z', color='volume', color_discrete_sequence=list(color_map.values()))
         fig.show()
     

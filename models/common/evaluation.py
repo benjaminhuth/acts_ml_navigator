@@ -129,7 +129,7 @@ def evaluate_and_plot(tracks_edges_start, tracks_params, tracks_edges_target, hi
     * tracks_params: a list of ndarrays with shape [track_length,selected_params]
     * history: a history dictionary (must contain the key 'loss' and 'val_loss')
     * evaluate_edge: a callable to invoke to evaluate a specific edge
-    * figsize: a tuple (width,height) in inches (?) for the figure
+    * [OPT] figsize: a tuple (width,height) in inches (?) for the figure
     
     Returns:
     * matploglib figure
@@ -264,6 +264,11 @@ def evaluate_and_plot(tracks_edges_start, tracks_params, tracks_edges_target, hi
     ax[1,0].legend(columns)
         
     # Plot beampipe score historgram
+    surf_coords = np.unique(np.hstack([ result.beampipe_scores[k] for k in result.beampipe_scores.keys() ]))
+    surf_dict = { zcoord: i for i, zcoord in enumerate(surf_coords) }
+    for k in result.beampipe_scores.keys():
+        result.beampipe_scores[k] = [ surf_dict[i] for i in result.beampipe_scores[k] ]
+    
     hist_data = np.array([ result.beampipe_scores[k] for k in result.beampipe_scores.keys() ], dtype=object)
     ax[1,1].set_title("Score at beampipe (wrt z coord)")
     ax[1,1].set_xlabel("z-coord bins")

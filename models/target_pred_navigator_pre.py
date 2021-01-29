@@ -27,6 +27,7 @@ from sklearn.model_selection import train_test_split
 from common.misc import *
 from common.preprocessing import *
 from common.evaluation import *
+from common.real_space_embedding import *
 
 ##########################
 # The feed-forward model #
@@ -154,6 +155,9 @@ def main():
     
     logging.info("Imported embedding '%s'", options['embedding_file'])
     logging.info("Beampipe split set by embedding is (%d,%d)", (len(options['bpsplit_z'])-1), options['bpsplit_phi'])
+    
+    if options['use_real_space_as_embedding']:
+        logging.warning("Imported embedding will NOT be used, instead a real-space embedding with the imported beampipe split")
 
     ########################
     # Import training data #
@@ -191,8 +195,12 @@ def main():
     assert len(x_train_ids) == len(x_train_params) == len(y_train_ids)
     
     # Apply embedding
-    embedding_model = tf.keras.models.load_model(options['embedding_file'], compile=False)
-    assert options['embedding_dim'] == np.squeeze(embedding_model(0)).shape[0]
+    if not options['use_real_space_as_embedding']:
+        embedding_model = tf.keras.models.load_model(options['embedding_file'], compile=False)
+        assert options['embedding_dim'] == np.squeeze(embedding_model(0)).shape[0]
+    else:
+        embedding_model = make_real_space_embedding_model(detector_data, options['bpsplit_z'], options['bpsplit_phi'])
+        options['embedding_dim'] = 3     
     
     x_train_embs = np.squeeze(embedding_model(x_train_ids))
     y_train_embs = np.squeeze(embedding_model(y_train_ids))
@@ -248,7 +256,7 @@ def main():
     # Build nn index matching the embedding model
     nn = NearestNeighbors()
     nn.fit(np.squeeze(embedding_model(np.arange(total_node_num))))
-    assert nn_index_matches_embedding_model(embedding_model, nn)
+    assert nn_index_matches_embedding_model(embedding_model, nn, is_keras_model=not options['use_real_space_as_embedding'])
     
     graph_map = make_graph_map(prop_data, total_node_num)
     

@@ -252,7 +252,7 @@ class RemainingTimeEstimator(tf.keras.callbacks.Callback):
         
         
 
-def nn_index_matches_embedding_model(embedding_model, nn, num_tests=10):
+def nn_index_matches_embedding_model(embedding_model, nn, num_tests=100, is_keras_model=True):
     '''
     Test if the nn index gives the correct indices for a embedding model
     
@@ -260,12 +260,14 @@ def nn_index_matches_embedding_model(embedding_model, nn, num_tests=10):
     * embedding_model: A keras model (which should consist only of a Embedding layer)
     * nn: A sklearn NN-index for the embedding
     * num_tests: How many random samples should be tested?
+    * is_keras_model: Is the model a keras model?
     
     Returns:
     * bool: does it match or not?
     '''
     
-    assert nn.n_samples_fit_ == embedding_model.get_layer(index=1).get_config()['input_dim']
+    if is_keras_model:
+        assert nn.n_samples_fit_ == embedding_model.get_layer(index=1).get_config()['input_dim']
     
     ref_ids = np.random.randint(0, nn.n_samples_fit_, num_tests)
     embs = np.squeeze(embedding_model(ref_ids))
@@ -279,6 +281,7 @@ def nn_index_matches_embedding_model(embedding_model, nn, num_tests=10):
 def export_results(output_filename, model, figure, options):
     '''
     Exports all necessary things, if options['export'] is true.
+    Also converts options['bpsplit_z'] from list back to int
     
     Parameters:
     * output_file: string, also containing the directory
@@ -288,6 +291,7 @@ def export_results(output_filename, model, figure, options):
     '''
     
     assert os.path.exists(options['output_dir'])
+    options['bpsplit_z'] = len(options['bpsplit_z'])-1
     
     if not options['export']:
         logging.info("output filename would be '%s'",output_filename)

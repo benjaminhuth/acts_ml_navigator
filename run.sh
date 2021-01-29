@@ -4,7 +4,8 @@ module load python/3.8.6
 
 cd /home/benjamin/Dokumente/acts_project/ml_navigator/models
 
-python pairwise_score_navigator_self \
-    --learning_rate=0.001 --epochs 100 --prop_data_size 128
+python pairwise_score_navigator_pre.py --epochs 300 --prop_data_size 512 --show 0 --embedding_dim 10 --bpsplit_method uniform
 
-# python graph_forward_navigator.py --network_depth=3 --layer_size=500 --learning_rate=0.001
+python pairwise_score_navigator_pre.py --epochs 300 --prop_data_size 512 --show 0 --embedding_dim 10 --bpsplit_method density
+
+python pairwise_score_navigator_pre.py --epochs 300 --prop_data_size 512 --show 0 --embedding_dim 10 --use_real_space_as_embedding 1

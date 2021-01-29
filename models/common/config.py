@@ -55,6 +55,7 @@ def get_common_options(output_dir):
         'disable_gpu': False,
         'export': True, 
         'show': True,
+        'use_real_space_as_embedding': False,
         'prop_data_size': 128,
         'bpsplit_z': 400,
         'bpsplit_phi': 16,
