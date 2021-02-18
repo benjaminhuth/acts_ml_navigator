@@ -69,6 +69,8 @@ def get_common_options(output_dir):
         'validation_split': 0.3,
         'network_depth': 3,
         'layer_size': 500,
+        'eval_smooth_rzmap': True,
+        'eval_smooth_rzmap_radius': 35.0,
     }
     
     return options

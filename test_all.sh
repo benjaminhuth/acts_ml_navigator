@@ -16,7 +16,7 @@ mkdir -p $TEST_DIR
 # Run all tests #
 #################
 
-SCRIPT=./models/pairwise_score_navigator_pre.py
+SCRIPT=$PWD/models/pairwise_score_navigator_pre.py
 printf "=====| TEST $SCRIPT |=====\n\n"
 python $SCRIPT $MINIMAL_SETTINGS --data_gen_method=graph
 
@@ -33,7 +33,7 @@ printf "\n"
 
 
 
-SCRIPT=./models/pairwise_score_navigator_pre.py
+SCRIPT=$PWD/models/pairwise_score_navigator_pre.py
 printf "=====| TEST $SCRIPT |=====\n\n"
 python $SCRIPT $MINIMAL_SETTINGS --data_gen_method=false_sim
 
@@ -50,24 +50,7 @@ printf "\n"
 
 
 
-SCRIPT=./models/pairwise_score_navigator_self.py
-printf "=====| TEST $SCRIPT |=====\n\n"
-python $SCRIPT $MINIMAL_SETTINGS --bpsplit_z 20
-
-if [ $? -ne 0 ]; then
-    printf "\n>>>>>> ERROR OCCURED <<<<<<\n\n"
-    rm -rf $TEST_DIR
-    exit 1
-fi
-
-(cd $TEST_DIR && ls -l && rm -rf *)
-printf "\n"
-
-#########################################################
-
-
-
-SCRIPT=./models/target_pred_navigator_pre.py
+SCRIPT=$PWD/models/target_pred_navigator_pre.py
 printf "=====| TEST $SCRIPT |=====\n\n"
 python $SCRIPT $MINIMAL_SETTINGS --evaluation_method=graph
 
@@ -84,7 +67,7 @@ printf "\n"
 
 
 
-SCRIPT=./models/target_pred_navigator_pre.py
+SCRIPT=$PWD/models/target_pred_navigator_pre.py
 printf "=====| TEST $SCRIPT |=====\n\n"
 python $SCRIPT $MINIMAL_SETTINGS --evaluation_method=nn
 
@@ -100,7 +83,7 @@ printf "\n"
 #########################################################
 
 
-SCRIPT=./models/weighted_graph_navigator.py --bpsplit_z 20
+SCRIPT=$PWD/models/weighted_graph_navigator.py --bpsplit_z 20
 printf "=====| TEST $SCRIPT |=====\n\n"
 python $SCRIPT $MINIMAL_SETTINGS
 

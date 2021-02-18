@@ -2,6 +2,8 @@ import os
 import sys
 import time
 import collections
+import pprint
+import logging
 
 import numpy as np
 import pandas as pd
@@ -10,6 +12,8 @@ import matplotlib.ticker as ticker
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 import tensorflow as tf
+
+from sklearn.neighbors import NearestNeighbors
 
 
 
@@ -25,7 +29,6 @@ def get_colors():
         '#800000',  # Dark red
         '#737373',  # Gray
     ]
-
 
 
 def autolabel(ax, rects):
@@ -59,6 +62,9 @@ def print_progress_bar(iteration, total, prefix = '', suffix = '', decimals = 1,
         fill        - Optional  : bar fill character (Str)
         printEnd    - Optional  : end character (e.g. "\r", "\r\n") (Str)
     """
+    if not 'TERM' in os.environ or iteration > total:
+        return
+    
     percent = ("{0:." + str(decimals) + "f}").format(100 * (iteration / float(total)))
     filledLength = int(length * iteration // total)
     bar = fill * filledLength + '-' * (length - filledLength)
@@ -66,6 +72,33 @@ def print_progress_bar(iteration, total, prefix = '', suffix = '', decimals = 1,
     # Print New Line on Complete
     if iteration == total: 
         print()
+        
+
+class ProgressBar:
+    '''
+    Class wrapping the print_progress_bar function with time estimate functionality
+    '''
+    def __init__(self, total, prefix = "Progress:"):
+        self.total = total
+        self.prefix = prefix
+        self.t0 = time.time()
+        self.total_time = 0
+        self.i = 0
+        
+        print_progress_bar(self.i, self.total, self.prefix)
+        
+        
+    def print_bar(self):
+        t1 = time.time()
+        
+        self.total_time += (t1 - self.t0)
+        self.t0 = t1
+        
+        self.i += 1
+        remaining = (self.total_time / self.i) * (self.total - self.i)        
+        remaining_str = time.strftime("%Hh:%Mm:%Ss", time.gmtime(remaining))
+        
+        print_progress_bar(self.i, self.total, self.prefix, "- estimated time remaining: {}".format(remaining_str))
 
 
 
@@ -120,7 +153,10 @@ def neighbor_accuracy_detailed(y_true,y_pred, nn):
 
 
 
-def evaluate_and_plot(tracks_edges_start, tracks_params, tracks_edges_target, history, evaluate_edge, figsize=(16,10)):
+def evaluate_and_plot(tracks_edges_start, tracks_params, 
+                      tracks_edges_target, history, 
+                      evaluate_edge_fn, 
+                      smooth_rzmap=True, smooth_radius=35.0, figsize=(16,10)):
     '''
     Function that makes a collection of plots for evaluation of a model
     
@@ -138,53 +174,39 @@ def evaluate_and_plot(tracks_edges_start, tracks_params, tracks_edges_target, hi
     '''
     assert len(tracks_edges_start) == len(tracks_params) == len(tracks_edges_target)
     assert tracks_edges_start[0].shape == tracks_edges_target[0].shape
-    assert tracks_params[0].shape[1] == 3 or tracks_params[0].shape[1] == 4
+    #assert tracks_params[0].shape[1] == 3 or tracks_params[0].shape[1] == 4
     
     ##############
     # Evaluation #
     ##############
     
+    logging.info("Started evaluation of test data")
+    
     max_track_length = max([ len(track) for track in tracks_edges_start ])
     
     # Initialize the result
-    EvaluationResult = collections.namedtuple("EvaluationResult", ["score_matrix", "beampipe_scores"])
+    EvaluationResult = collections.namedtuple("EvaluationResult", ["score_matrix", "beampipe_scores", "rzmap"])
     
     columns = ['in1','in2','in3','in5','in10','other','num_edges','num_edges_max','num_edges_min','relative_score']
     result = EvaluationResult(
         pd.DataFrame(data = np.zeros((max_track_length, len(columns))),
                      index=np.arange(max_track_length),
                      columns=columns),
-        { 'in1': [], 'in2': [], 'in3': [], 'in5': [], 'in10': [], 'other': [] }
+        { 'in1': [], 'in2': [], 'in3': [], 'in5': [], 'in10': [], 'other': [] },
+        []
     )
     
     # Loop over all tracks
     times = []
         
-    if 'TERM' in os.environ:
-        print_progress_bar(0, len(tracks_edges_start))
+    progress_bar = ProgressBar(len(tracks_edges_start))
     
     for i, (starts, targets, params) in enumerate(zip(tracks_edges_start, tracks_edges_target, tracks_params)):  
                 
-        t0 = time.time()
-        
         for pos_in_track, (start, target, param) in enumerate(zip(starts, targets, params)):
-            result = evaluate_edge(pos_in_track, start, target, param, result)
+            result = evaluate_edge_fn(pos_in_track, start, target, param, result)
             
-        t1 = time.time()
-        
-        times.append(t1 - t0)
-        remaining = np.mean(np.array(times)) * (len(tracks_edges_start)-i)
-        remaining_str = time.strftime("%Hh:%Mm:%Ss", time.gmtime(remaining))
-            
-        if not 'TERM' in os.environ:
-            # Only print 10 progress statements
-            if i % (len(tracks_edges_start) // 10) == 0:
-                progress = 100*i/len(tracks_edges_start)
-                print("Progress: {:.1f}% - estimated time remaining: {}".format(progress, remaining_str), 
-                      flush=True)
-        else:
-            print_progress_bar(i+1, len(tracks_edges_start),
-                               "Progress: ", "- estimated time remaining: {}".format(remaining_str))  
+        progress_bar.print_bar()
     
     # Normalize
     hits_per_pos = np.sum(result.score_matrix[['in1','in2','in3','in5','in10','other']].values, axis=1)
@@ -199,6 +221,8 @@ def evaluate_and_plot(tracks_edges_start, tracks_params, tracks_edges_target, hi
     ############
     # Plotting #
     ############
+    
+    logging.info("Process data and plot them")
     
     fig, ax = plt.subplots(nrows=2, ncols=3, figsize=figsize)
     
@@ -264,36 +288,82 @@ def evaluate_and_plot(tracks_edges_start, tracks_params, tracks_edges_target, hi
     ax[1,0].legend(columns)
         
     # Plot beampipe score historgram
-    surf_coords = np.unique(np.hstack([ result.beampipe_scores[k] for k in result.beampipe_scores.keys() ]))
+    surf_coords = np.unique(np.hstack(list(result.beampipe_scores.values())))
     surf_dict = { zcoord: i for i, zcoord in enumerate(surf_coords) }
     for k in result.beampipe_scores.keys():
-        result.beampipe_scores[k] = [ surf_dict[i] for i in result.beampipe_scores[k] ]
+        result.beampipe_scores[k] = [ surf_dict[z] for z in result.beampipe_scores[k] ]
     
     hist_data = np.array([ result.beampipe_scores[k] for k in result.beampipe_scores.keys() ], dtype=object)
     ax[1,1].set_title("Score at beampipe (wrt z coord)")
     ax[1,1].set_xlabel("z-coord bins")
     ax[1,1].set_ylabel("score")
-    ax[1,1].hist(hist_data, 25, histtype='bar', stacked=True, color=get_colors())
+    ax[1,1].hist(hist_data, len(surf_coords), histtype='bar', stacked=True, color=get_colors())
     ax[1,1].legend(result.beampipe_scores.keys())
     
-    # Plot possible edges per track pos
-    ax[1,2].set_title("Mean graph edges per track position")
-    ax[1,2].set_xlabel("track position")
-    ax[1,2].set_ylabel("edges")
-    if not result.score_matrix['num_edges'].to_numpy().all() == 0:
-        ax[1,2].plot(result.score_matrix['num_edges'].to_numpy())
-        ax[1,2].plot(result.score_matrix['num_edges_max'].to_numpy())
-        ax[1,2].plot(result.score_matrix['num_edges_min'].to_numpy())
-        ax[1,2].legend(['mean', 'max', 'min'])
-    else:
-        ax[1,2].text(0.2,0.5,"no relative_score to plot")
+    # Plot possible edges per track pos (DEACTIVATED IN FAVOR OF R-Z-MAP
+    #ax[1,2].set_title("Mean graph edges per track position")
+    #ax[1,2].set_xlabel("track position")
+    #ax[1,2].set_ylabel("edges")
+    #if not result.score_matrix['num_edges'].to_numpy().all() == 0:
+        #ax[1,2].plot(result.score_matrix['num_edges'].to_numpy())
+        #ax[1,2].plot(result.score_matrix['num_edges_max'].to_numpy())
+        #ax[1,2].plot(result.score_matrix['num_edges_min'].to_numpy())
+        #ax[1,2].legend(['mean', 'max', 'min'])
+    #else:
+        #ax[1,2].text(0.2,0.5,"no relative_score to plot")
+        
+    # R-Z-Map
+    rzmap = np.vstack(result.rzmap)
+    
+    # Make NN index
+    rz_nn = NearestNeighbors(n_jobs=16)
+    rz_nn.fit(rzmap[:,0:2])
+    
+    # Select random elements to plot (to avoid to long computations)
+    idxs = np.arange(len(rzmap))
+    np.random.shuffle(idxs)
+    idxs = idxs[0:min(len(rzmap),100000)]
+    
+    # Smooth plot
+    if smooth_rzmap:
+        logging.info("Smoothing R-Z-Map")
+        neighbors = rz_nn.radius_neighbors(rzmap[idxs][:,0:2],radius=smooth_radius,return_distance=False)
+        
+        progress_bar = ProgressBar(len(idxs))
+        
+        for idx, nbs in zip(idxs, neighbors):
+            if len(nbs) > 0:
+                rzmap[idx,2] = sum([ rzmap[n,2] for n in nbs ]) / len(nbs)
+                
+            progress_bar.print_bar()
+    
+    # Throw away all not selected entries
+    rzmap = rzmap[idxs]
+    
+    # Sort into categories
+    categories = [0,1,2,3,5,10]
+    mapdata = []
+    
+    for i in range(len(categories)-1):
+        mask = np.greater_equal(rzmap[:,2], categories[i]) & np.less(rzmap[:,2], categories[i+1])
+        mapdata.append(rzmap[mask][:,0:2])
+    
+    mask = np.greater_equal(rzmap[:,2], categories[-1])
+    mapdata.append(rzmap[mask][:,0:2])
+    
+    # Plot
+    ax[1,2].set_title("RZ-map")
+    ax[1,2].set_xlabel("z")
+    ax[1,2].set_ylabel("r")
+    for i in range(len(mapdata)):
+        ax[1,2].scatter(mapdata[i][:,1], mapdata[i][:,0], color=get_colors()[i])
     
     return fig, ax, float(np.sum(result.score_matrix['in1'].to_numpy())/total_num_edges)
 
 
 
 
-def fill_in_results(pos_in_track, score, surface_z_coord, result, num_targets=None):
+def fill_in_results(pos_in_track, score, surface_z_coord, trk_params, result, num_targets=None):
     '''
     Fillst the entries of the EvaluationResult named tuple.
     
@@ -301,12 +371,14 @@ def fill_in_results(pos_in_track, score, surface_z_coord, result, num_targets=No
     * pos_in_track: integer
     * score: in which of ['in1','in2','in3','in5','in10','other'] to put the result
     * surface_z_coord: z coord of the surface_z_coord
+    * trk_params (ndarray): track parameters
     * result: EvaluationResult
     * [OPT] num_targets: integer
     
     Returns:
     * EvaluationResult: modified result type
     '''
+    assert len(trk_params) == 7
     
     if score == 0: 
         result.score_matrix.loc[pos_in_track, 'in1'] += 1
@@ -335,5 +407,7 @@ def fill_in_results(pos_in_track, score, surface_z_coord, result, num_targets=No
             max(result.score_matrix.loc[pos_in_track, 'num_edges_max'], num_targets)
         result.score_matrix.loc[pos_in_track, 'num_edges_min'] = \
             min(result.score_matrix.loc[pos_in_track, 'num_edges_min'], num_targets)
+        
+    result.rzmap.append(np.array([ np.sqrt(trk_params[0]**2 + trk_params[1]**2), trk_params[2], score ]))
     
     return result

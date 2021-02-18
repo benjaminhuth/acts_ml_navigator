@@ -3,12 +3,11 @@ import datetime
 import logging
 import json
 
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+import tensorflow as tf
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-import tensorflow as tf
 
 from sklearn.neighbors import NearestNeighbors
 from sklearn.model_selection import train_test_split
@@ -84,6 +83,7 @@ def evaluate_edge(pos, start_emb, target_emb, x_params, result,
     '''    
     assert start_emb.shape == target_emb.shape
     assert len(start_emb.shape) == len(x_params.shape) == 1
+    assert len(x_params) == 7
     
     # Get ID and data of the current graph node
     start_id = int(np.squeeze(nn.kneighbors(start_emb.reshape(1,-1), 1, return_distance=False)))
@@ -96,7 +96,7 @@ def evaluate_edge(pos, start_emb, target_emb, x_params, result,
         
     # Broadcast input values to arrays for vectorized inference
     broadcasted_start = np.full((len(target_ids), len(start_emb)), start_emb)
-    params = np.full((len(target_ids),len(x_params)), x_params)
+    params = np.full((len(target_ids),len(x_params[3:7])), x_params[3:7])
     
     scores = np.squeeze(nav_model([broadcasted_start, target_embs, params]))
     score_idxs = np.flip(np.argsort(scores))
@@ -107,7 +107,7 @@ def evaluate_edge(pos, start_emb, target_emb, x_params, result,
     # Find where in the list the correct result is    
     correct_pos = int(np.argwhere((target_embs == target_emb).all(axis=1)))
     
-    return fill_in_results(pos, correct_pos, node_data.position[2], result, len(target_ids))
+    return fill_in_results(pos, correct_pos, node_data.position[2], x_params, result, len(target_ids))
 
 
 
@@ -247,6 +247,7 @@ def main():
                                       { 'data_gen_method': 'graph', 'graph_gen_false_per_true': 2 })
     
     assert options['data_gen_method'] == 'graph' or options['data_gen_method'] == 'false_sim'
+    assert options['bpsplit_method'] == 'uniform' or options['bpsplit_method'] == 'density'
     
     # False propagation data
     if options['data_gen_method'] == 'false_sim':
@@ -255,18 +256,23 @@ def main():
     
     # Embedding import
     embedding_dir = os.path.join(get_root_dir(), 'models/embeddings/')
-    embedding_info = extract_embedding_model(embedding_dir, options['embedding_dim'], options['bpsplit_z'],
-                                             options['bpsplit_phi'], options['bpsplit_method'])
     
-    options['embedding_file'] = embedding_info.path
-    options['bpsplit_z'] = embedding_info.bpsplit_z
-    options['bpsplit_phi'] = embedding_info.bpsplit_phi
+    if not options['use_real_space_as_embedding']:
+        embedding_info = extract_embedding_model(embedding_dir, options['embedding_dim'], options['bpsplit_z'],
+                                                options['bpsplit_phi'], options['bpsplit_method'])
+        
+        options['embedding_file'] = embedding_info.path
+        options['bpsplit_z'] = embedding_info.bpsplit_z
+        options['bpsplit_phi'] = embedding_info.bpsplit_phi
     
-    logging.info("imported embedding '%s' with beampipe split (%d,%d)",
-                    os.path.basename(options['embedding_file']), len(options['bpsplit_z'])-1, options['bpsplit_phi'])
-    
-    if options['use_real_space_as_embedding']:
-        logging.warning("Imported embedding will NOT be used, instead a real-space embedding with the imported beampipe split")
+        logging.info("Imported embedding '%s' with beampipe split (%d,%d)",
+                        os.path.basename(options['embedding_file']), len(options['bpsplit_z'])-1, options['bpsplit_phi'])
+    else:
+        logging.info("No embedding was imported, use real space surface coordinates instead!")
+        options['bpsplit_z'] = extract_bpsplit_bounds(embedding_dir, options['bpsplit_z'],
+                                                      options['bpsplit_phi'], options['bpsplit_method'])
+        
+        
     
     
     ################
@@ -278,7 +284,7 @@ def main():
     
     total_beampipe_split = (len(options['bpsplit_z'])-1)*options['bpsplit_phi']
     total_node_num = len(detector_data.index) - 1 + total_beampipe_split
-    selected_params = ['dir_x', 'dir_y', 'dir_z', 'qop']
+    selected_params = ['pos_x', 'pos_y', 'pos_z', 'dir_x', 'dir_y', 'dir_z', 'qop']
     
     # True samples
     prop_data_true = pd.read_csv(options['propagation_file'], dtype={'start_id': np.uint64, 'end_id': np.uint64})
@@ -323,6 +329,9 @@ def main():
                                                                     detector_data, selected_params)
     else:
         x_train, y_train = generate_train_data_from_graph(train_tracks, graph_map, options['graph_gen_false_per_true'])
+    
+    # only hand over dir and qop to training data
+    x_train[2] = x_train[2][:,3:7]
     
     # Shuffle
     idxs = np.arange(len(y_train))
@@ -395,10 +404,19 @@ def main():
     nn = NearestNeighbors()
     nn.fit(np.squeeze(embedding_model(np.arange(total_node_num))))
     assert nn_index_matches_embedding_model(embedding_model, nn, is_keras_model=not options['use_real_space_as_embedding'])
+    
+    # Do evaluation
+    evaluation_params = {
+        'tracks_edges_start': test_start_ids,
+        'tracks_params': test_tracks.start_params,
+        'tracks_edges_target': test_target_ids,
+        'history': history.history,
+        'evaluate_edge_fn': lambda a,b,c,d,e: evaluate_edge(a,b,c,d,e,graph_map,nn,navigation_model,embedding_model),
+        'smooth_rzmap': options['eval_smooth_rzmap'],
+        'smooth_radius': options['eval_smooth_rzmap_radius'],
+    }
         
-    fig, axes, score = \
-        evaluate_and_plot(test_start_ids, test_tracks.start_params, test_target_ids, history.history,
-                              lambda a,b,c,d,e: evaluate_edge(a,b,c,d,e,graph_map,nn,navigation_model,embedding_model))
+    fig, axes, score = evaluate_and_plot(**evaluation_params)
         
     # Summary title and data info 
     data_gen_str = "gen: simulated" if options['data_gen_method'] == 'false_sim' else "gen: graph ({})".format(options['graph_gen_false_per_true'])

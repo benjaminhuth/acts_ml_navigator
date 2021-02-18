@@ -7,10 +7,10 @@ import sys
 import os
 import collections
 
-import numpy as np
-
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3' 
 import tensorflow as tf
+import numpy as np
+import pandas as pd
 
 from .config import *   
     
@@ -37,6 +37,7 @@ def parse_args_from_dictionary(dictionary):
             parser.add_argument("--" + key, type=type(value))
             
     parser.add_argument("--show_config", action='store_true')
+    parser.add_argument("--load_json", type=str)
      
     # Pars parameters
     args = vars(parser.parse_args())
@@ -48,7 +49,19 @@ def parse_args_from_dictionary(dictionary):
         
     del args['show_config']
     
-    # Add args to dictionary
+    # Handle 'load_json'
+    if args['load_json'] != None:
+        with open(args['load_json'],'r') as conf_file:
+            parsed = json.load(conf_file)
+            
+        for key, val in parsed.items():
+            dictionary[key] = val
+            
+        logging.info("loaded configuration from '%s'", args['load_json'])
+            
+    del args['load_json']
+    
+    # Handle remaining args
     num_args = 0
     for key, value in args.items():
         if value != None:
@@ -57,8 +70,9 @@ def parse_args_from_dictionary(dictionary):
             dictionary[key] = arg_type(value)
             
     logging.info("Parsed %d command line arguments, run with the following params:", num_args)
-    
+        
     return dictionary
+    
 
 
 
@@ -133,6 +147,9 @@ def extract_embedding_model(embedding_dir, embedding_dim, bpsplit_z=None, bpspli
     * embedding_dim (int): which dimension we search
     * [OPT] bpsplit_z (int): If given, only accept with this beampipe split z
     * [OPT] bpsplit_ph (int)i: If given, only accept with this beampipe split phi
+    
+    Returns:
+    * Named tuple EmbeddingInfo('path', 'bpsplit_z', 'bpsplit_phi') 
     '''
     
     embedding_models = []
@@ -180,13 +197,44 @@ def extract_embedding_model(embedding_dir, embedding_dim, bpsplit_z=None, bpspli
             embedding_models.append( EmbeddingInfo(entry.path, bpsplit_z_bounds, this_bpsplit_phi) )
             
     if len(embedding_models) == 0:
-        logging.error("Could not find a matching embedding model (dim=%d, bpz=%sd, bpphi=%s, method=%s) in '%s'",
+        logging.error("Could not find a matching embedding model (dim=%d, bpz=%s, bpphi=%s, method=%s) in '%s'",
                       embedding_dim, bpsplit_z, bpsplit_phi, bp_method, embedding_dir)
         exit(1)
     
     # filenames should be sorted from worst->best
     return embedding_models[-1]
 
+
+
+def extract_bpsplit_bounds(embedding_dir, z, phi, method):
+    '''
+    Finds a bpsplit_z file in the directory matching the criteria
+    
+    Parameters:
+    * embedding_dir (str): Where to search for the models
+    * z (int): z split
+    * phi (int): phi split
+    * method (str): 'uniform' or 'density'
+    
+    Returns:
+    * bpsplit_z_bounds (list)
+    '''
+    search_str = "bz{}{}-bp{}".format(z, 'uni' if method == 'uniform' else 'den', phi)
+    
+    assert os.path.exists(embedding_dir)
+    assert method == 'uniform' or method == 'density'
+        
+    for entry in os.scandir(embedding_dir):        
+        filename = entry.name
+        
+        if not (".txt" in filename and search_str in filename):
+            continue
+        
+        return np.loadtxt(entry.path).tolist()
+    
+    logging.error("could not find specified embedding (bpz=%d, bphi=%d, method=%s) in '%s'", z, phi, method, embedding_dir)
+    exit()
+        
 
 
 def extract_propagation_data(propagation_dir):
@@ -301,8 +349,32 @@ def export_results(output_filename, model, figure, options):
     logging.info("exported model to '%s'", output_filename)
 
     figure.savefig(output_filename + ".png")
-    logging.info("exported chart to '%s'.png", output_filename)
+    logging.info("exported chart to '%s.png'", output_filename)
     
     with open(output_filename + '.json','w') as conf_file:
         json.dump(options, conf_file, indent=4)
     logging.info("Exported configuration to '%s.json'", output_filename)
+
+
+
+def export_embedding_file(output_filename, detector_file, embedding_model, total_bp_split):
+    '''
+    
+    '''
+    
+    geo_ids = pd.read_csv(detector_file, dtype={'geo_id': np.uint64})['geo_id'].to_numpy()[1:]
+    total_node_num = len(geo_ids) + total_bp_split
+    
+    numbers = np.arange(total_node_num)
+    embeddings = np.squeeze(embedding_model(numbers))
+    
+    embedding_dim = embeddings.shape[1]
+    headers = [ "emb" + str(i) for i in range(embedding_dim) ]
+    
+    df = pd.DataFrame(data=embeddings, index=numbers, columns=headers)
+    df.insert(loc=0, column='geoid', value=np.concatenate([np.arange(total_bp_split, dtype=np.uint64), geo_ids]))
+    
+    df.to_csv(output_filename)
+    
+    
+    

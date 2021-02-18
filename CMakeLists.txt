@@ -51,6 +51,7 @@ include_directories(SYSTEM
     ${ACTS_ROOT}/Examples/Detectors/MagneticField/include
     ${ACTS_ROOT}/Examples/Run/Common/include
     ${ACTS_ROOT}/Examples/Algorithms/Propagation/include
+    ${ACTS_ROOT}/Examples/Io/Csv/include
 )
 
 add_library(ActsExamplesCommon SHARED IMPORTED)
@@ -68,6 +69,10 @@ set_target_properties(ActsExamplesDetectorGeneric PROPERTIES IMPORTED_LOCATION $
 add_library(ActsExamplesMagneticField SHARED IMPORTED)
 add_dependencies(ActsExamplesMagneticField ActsCore)
 set_target_properties(ActsExamplesMagneticField PROPERTIES IMPORTED_LOCATION ${ACTS_BINARY_DIR}/lib64/libActsExamplesMagneticField.so)
+
+add_library(ActsExamplesIoCsv SHARED IMPORTED)
+add_dependencies(ActsExamplesIoCsv ActsCore)
+set_target_properties(ActsExamplesIoCsv PROPERTIES IMPORTED_LOCATION ${ACTS_BINARY_DIR}/lib64/libActsExamplesIoCsv.so)
 
 # subdirectories
 add_subdirectory(logger)

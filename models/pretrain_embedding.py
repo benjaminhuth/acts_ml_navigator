@@ -21,10 +21,59 @@ from common.preprocessing import *
 from common.misc import *
 
 
+   
+def generate_batch(batch_size, connected_edges, total_node_num):
+    num_connected = batch_size//2
+    num_unconnected = batch_size - num_connected
+    
+    # increase number of unconnecteds to account for later filtered out edges
+    increase = 1.1
+    
+    while True:
+        # connected edges
+        idxs = np.arange(len(connected_edges))
+        np.random.shuffle(idxs)
+        
+        x_connected = connected_edges[idxs[0:num_connected]].copy()
+        y_connected = np.ones(num_connected)
+        
+        # unconnected edges
+        x_unconnected = np.random.randint(0,total_node_num,(int(num_unconnected*increase),2))
+        x_unconnected = np.unique(x_unconnected,axis=0)
+        
+        is_unconnected_mask = np.logical_not(np.isin(cantor_pairing(x_unconnected),cantor_pairing(connected_edges),assume_unique=True))
+        is_no_loop_mask = x_unconnected[:,0] != x_unconnected[:,1]
+        valid_mask = np.logical_and(is_unconnected_mask, is_no_loop_mask)
+        
+        x_unconnected = x_unconnected[valid_mask]
+        
+        if len(x_unconnected) < num_unconnected:
+            logging.warning("'continue' in generator loop")
+            continue
+        
+        x_unconnected = x_unconnected[0:num_unconnected]
+        y_unconnected = np.zeros(num_unconnected)
+        
+        # combine
+        x = np.concatenate([x_connected,x_unconnected])
+        y = np.concatenate([y_connected,y_unconnected])
+        
+        # shuffle
+        idxs = np.arange(len(x))
+        np.random.shuffle(idxs)
+        
+        x = x[idxs]
+        y = y[idxs]
+        
+        yield ([ x[:,0], x[:,1] ], y)
+
+
+
+
 def main():
     options = init_options_and_logger(get_embedding_training_dir(),
                                       os.path.join(get_root_dir(), "models/embeddings/"),
-                                      { 'prop_data_size': 128, 'batch_size': 16384 })
+                                      { 'prop_data_size': 128, 'batch_size': 16384, 'additional_beampipe_training': True })
     
     ######################
     # PREPARE GRAPH DATA #
@@ -46,51 +95,10 @@ def main():
     # Find connected edges
     connected_edges = np.unique(graph_data[['start_id', 'end_id']].to_numpy(), axis=0)
     logging.info("Imported graph with %d edges", len(connected_edges))
-       
-    def generate_batch(batch_size):
-        num_connected = batch_size//2
-        num_unconnected = batch_size - num_connected
-        
-        # increase number of unconnecteds to account for later filtered out edges
-        increase = 1.1
-        
-        while True:
-            # connected edges
-            idxs = np.arange(len(connected_edges))
-            np.random.shuffle(idxs)
-            
-            x_connected = connected_edges[idxs[0:num_connected]].copy()
-            y_connected = np.ones(num_connected)
-            
-            # unconnected edges
-            x_unconnected = np.random.randint(0,total_node_num,(int(num_unconnected*increase),2))
-            x_unconnected = np.unique(x_unconnected,axis=0)
-            
-            is_unconnected_mask = np.logical_not(np.isin(cantor_pairing(x_unconnected),cantor_pairing(connected_edges),assume_unique=True))
-            is_no_loop_mask = x_unconnected[:,0] != x_unconnected[:,1]
-            valid_mask = np.logical_and(is_unconnected_mask, is_no_loop_mask)
-            
-            x_unconnected = x_unconnected[valid_mask]
-            
-            if len(x_unconnected) < num_unconnected:
-                logging.warning("'continue' in generator loop")
-                continue
-            
-            x_unconnected = x_unconnected[0:num_unconnected]
-            y_unconnected = np.zeros(num_unconnected)
-            
-            # combine
-            x = np.concatenate([x_connected,x_unconnected])
-            y = np.concatenate([y_connected,y_unconnected])
-            
-            # shuffle
-            idxs = np.arange(len(x))
-            np.random.shuffle(idxs)
-            
-            x = x[idxs]
-            y = y[idxs]
-            
-            yield ([ x[:,0], x[:,1] ], y)
+    
+    # This only contains edges for a special beampipe training
+    bp_connected_edges = np.unique(graph_data.loc[ graph_data['start_id'] < total_beampipe_split ][['start_id', 'end_id']].to_numpy(), axis=0)
+           
 
     ###################
     # LEARN EMBEDDING #
@@ -129,12 +137,26 @@ def main():
         'learning_rate': options['learning_rate']
     }
     
-    gen = generate_batch(options['batch_size'])
-    
     train_embedding_model = build_model(**model_params)
     
     steps_per_epoch = 2*len(connected_edges)//options['batch_size']
     logging.info("Start to fit embedding (steps_per_epoch = %d)", steps_per_epoch)
+    
+    if options['additional_beampipe_training']:
+        logging.info("Do first a special beampipe training with 1/4 of the epochs")
+        
+        gen_bp = generate_batch(options['batch_size'], bp_connected_edges, len(np.unique(bp_connected_edges)))
+        
+        history_bp = train_embedding_model.fit(
+            x=gen_bp, 
+            steps_per_epoch=2*len(bp_connected_edges)//options['batch_size'],
+            epochs=options['epochs']//4,
+            verbose=2,
+            callbacks=[RemainingTimeEstimator(options['epochs']//4)]
+        )
+        
+    logging.info("Start fitting with regular data")
+    gen = generate_batch(options['batch_size'],connected_edges,total_node_num)
     
     history = train_embedding_model.fit(
         x=gen, 
