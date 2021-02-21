@@ -6,6 +6,7 @@
 #include <ActsExamples/GenericDetector/GenericDetector.hpp>
 #include <ActsExamples/Geometry/CommonGeometry.hpp>
 #include <ActsExamples/Options/CommonOptions.hpp>
+#include <ActsExamples/TGeoDetector/TGeoDetector.hpp>
 
 using geoid_name_table_t = std::vector<std::tuple<uint64_t, std::string, Acts::Vector3>>;
 
@@ -13,13 +14,19 @@ void to_ostream(std::ostream &os, const geoid_name_table_t &table);
 
 int main(int argc, char ** argv)
 {    
-    GenericDetector detector;
+    GenericDetector generic_detector;
+    TGeoDetector tgeo_detector;
+    
     Acts::GeometryContext gctx;
     
     auto desc = ActsExamples::Options::makeDefaultOptions();
     ActsExamples::Options::addGeometryOptions(desc);
     ActsExamples::Options::addMaterialOptions(desc);
-    detector.addOptions(desc);
+    generic_detector.addOptions(desc);
+    tgeo_detector.addOptions(desc);
+        
+    desc.add_options()
+        ("detector-type", boost::program_options::value<std::string>()->default_value("generic"), "'generic' or 'tgeo'");
     
     auto vm = ActsExamples::Options::parse(desc, argc, argv);
     if (vm.empty()) 
@@ -27,7 +34,17 @@ int main(int argc, char ** argv)
         return EXIT_FAILURE;
     }
     
-    auto geometry = ActsExamples::Geometry::build(vm, detector);
+    // Which detector?
+    throw_assert(vm["detector-type"].as<std::string>() == "generic" || vm["detector-type"].as<std::string>() == "tgeo", "dtector type must be 'generic' or 'tgeo'");
+    
+    ActsExamples::IBaseDetector *detector;
+    
+    if( vm["detector-type"].as<std::string>() == "generic" )
+        detector = &generic_detector;
+    else
+        detector = &tgeo_detector;
+    
+    auto geometry = ActsExamples::Geometry::build(vm, *detector);
     const auto tGeometry = geometry.first;
     
     geoid_name_table_t table;

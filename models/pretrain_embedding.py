@@ -71,9 +71,14 @@ def generate_batch(batch_size, connected_edges, total_node_num):
 
 
 def main():
-    options = init_options_and_logger(get_embedding_training_dir(),
-                                      os.path.join(get_root_dir(), "models/embeddings/"),
-                                      { 'prop_data_size': 128, 'batch_size': 16384, 'additional_beampipe_training': True })
+    options = init_options_and_logger(os.path.join(get_root_dir(), "models/embeddings/"),
+                                      {
+                                          'prop_data_size': 128,
+                                          'batch_size': 16384,
+                                          'additional_beampipe_training': False,
+                                          'epochs': 20000
+                                      },
+                                      get_embedding_training_dir)
     
     ######################
     # PREPARE GRAPH DATA #

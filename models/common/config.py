@@ -9,33 +9,47 @@ def get_root_dir():
     '''
     Returns the root data directory (TODO make configurable by cmake!)
     '''
-    return "/home/benjamin/Dokumente/acts_project/ml_navigator/data/"
+    path = "/home/benjamin/Dokumente/acts_project/ml_navigator/data/"
+    assert os.path.exists(path)
+    return path
 
 
-def get_navigation_training_dir():
+def get_navigation_training_dir(detector):
     '''
     Returns the directory where propagation logs for navigation training are saved
     '''
-    return os.path.join(get_root_dir(), "logger/navigation_training/")
+    assert detector == 'generic' or detector == 'itk'
+    path = os.path.join(get_root_dir(), "detectors", detector, "navigation_training")
+    assert os.path.exists(path)
+    return path
 
-def get_false_samples_dir():
+def get_false_samples_dir(detector):
     '''
     Returns the directory where false sample for the pairwise scoring model are stored
     '''
-    return os.path.join(get_root_dir(), "logger/false_samples/")
+    assert detector == 'generic' or detector == 'itk'
+    path = os.path.join(get_root_dir(), "detectors", detector, "false_samples")
+    assert os.path.exists(path)
+    return path
 
-def get_embedding_training_dir():
+def get_embedding_training_dir(detector):
     '''
     Returns the directory where propagation logs for embedding training are saved
     '''
-    return os.path.join(get_root_dir(), "logger/embedding_training/")
+    assert detector == 'generic' or detector == 'itk'
+    path = os.path.join(get_root_dir(), "detectors", detector, "embedding_training")
+    assert os.path.exists(path)
+    return path
 
 
-def get_detector_file():
+def get_detector_file(detector):
     '''
     Returns the .csv file where the list of detector surfaces is stored
     '''
-    return os.path.join(get_root_dir(), "detector/detector_surfaces.csv")
+    assert detector == 'generic' or detector == 'itk'
+    path = os.path.join(get_root_dir(), "detectors", detector, "detector_surfaces.csv")
+    assert os.path.exists(path)
+    return path
 
 
 def get_common_options(output_dir):
@@ -50,15 +64,15 @@ def get_common_options(output_dir):
     '''
     
     options = {
-        'detector_file': get_detector_file(),
         'output_dir': output_dir,
         'disable_gpu': False,
         'export': True, 
         'show': True,
+        'detector': 'generic',
         'use_real_space_as_embedding': False,
         'prop_data_size': 128,
-        'bpsplit_z': 400,
-        'bpsplit_phi': 16,
+        'bpsplit_z': 40,
+        'bpsplit_phi': 1,
         'bpsplit_method': 'density',
         'epochs': 10,
         'embedding_dim': 10,

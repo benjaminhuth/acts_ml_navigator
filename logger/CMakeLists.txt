@@ -2,4 +2,4 @@ add_executable(logger logger.cpp)
 
 target_link_libraries(logger Boost::program_options)
 target_link_libraries(logger Eigen3::Eigen)
-target_link_libraries(logger ActsCore ActsExamplesCommon ActsExamplesFramework ActsExamplesDetectorGeneric ActsExamplesMagneticField)
+target_link_libraries(logger ActsCore ActsExamplesCommon ActsExamplesFramework ActsExamplesDetectorGeneric ActsExamplesDetectorTGeo ActsExamplesMagneticField)

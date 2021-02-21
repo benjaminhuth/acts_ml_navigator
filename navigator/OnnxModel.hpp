@@ -1,11 +1,9 @@
 #pragma once
 
 #include <core/session/onnxruntime_cxx_api.h>
-
 #include <Acts/Definitions/Algebra.hpp>
 
-///
-/// 
+
 template<int NumInputs, int NumOutputs>
 class OnnxModel
 {    
@@ -80,6 +78,7 @@ public:
     OnnxModel &operator=(const OnnxModel &) = delete;
 
     /// @brief Run the ONNX inference function
+    /// @note The inputVectors are not a const reference, since the OnnxRuntime wants T* for all tensors, regardless if input or output 
     template<typename InTuple, typename OutTuple>
     void predict(OutTuple &outputVectors, InTuple &inputVectors) const
     {
@@ -95,6 +94,9 @@ public:
         // Helper function
         auto make_tensor = [&](auto &vector, auto &shape)
         {                
+            if( std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<int64_t>()) != vector.size() )
+                throw std::invalid_argument("input vector not valid");
+            
             return Ort::Value::CreateTensor<float>(memInfo, vector.data(), static_cast<std::size_t>(vector.size()),
                                                    shape.data(), shape.size());
         };

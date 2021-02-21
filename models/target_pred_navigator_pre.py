@@ -274,8 +274,7 @@ def evaluate_edge_graph(pos, x_emb, y_true, x_params, result, graph_map, nn, nav
 #####################
 
 def main(): 
-    options = init_options_and_logger(get_navigation_training_dir(), 
-                                      os.path.join(get_root_dir(), "models/target_pred_navigator_pre/"),
+    options = init_options_and_logger(os.path.join(get_root_dir(), "models/target_pred_navigator_pre/"),
                                       {
                                           'evaluation_method': 'nn',
                                           'hyperparameter_optimization': False,
@@ -287,7 +286,7 @@ def main():
     assert options['evaluation_method'] == 'nn' or options['evaluation_method'] == 'graph'
     assert not (options['use_real_space_as_embedding'] and options['concat_real_space_and_emb'])
     
-    embedding_dir = os.path.join(get_root_dir(), 'models/embeddings/')
+    embedding_dir = os.path.join(get_root_dir(), 'models/embeddings/', options['detector'])
     embedding_info = extract_embedding_model(embedding_dir, options['embedding_dim'], options['bpsplit_z'],
                                              options['bpsplit_phi'], options['bpsplit_method'])
     options['embedding_file'] = embedding_info.path
@@ -482,10 +481,10 @@ def main():
     
     if options['evaluation_method'] == 'nn':
         evaluation_params['evaluate_edge_fn'] = lambda a,b,c,d,e: evaluate_edge_nn(a,b,c,d,e,nn,model,graph_map)
-        fig, axes, score = evaluate_and_plot(**evaluation_params)
+        fig, axes, score, rzmap_df = evaluate_and_plot(**evaluation_params)
     else: 
         evaluation_params['evaluate_edge_fn'] = lambda a,b,c,d,e: evaluate_edge_graph(a,b,c,d,e,graph_map,nn,model,embedding_model)
-        fig, axes, score = evaluate_and_plot(**evaluation_params)
+        fig, axes, score, rzmap_df = evaluate_and_plot(**evaluation_params)
     
     # Add additional information to figure
     bpsplit_str = "bp split: ({}, {})".format((len(options['bpsplit_z'])-1),options['bpsplit_phi'])
@@ -518,7 +517,7 @@ def main():
     filename += "-rnn" if options['recurrent'] else ""
     output_file = os.path.join(options['output_dir'], filename)
     
-    export_results(output_file, model, fig, options)
+    export_results(output_file, model, fig, options, rzmap_df)
     
     
 if __name__ == "__main__":

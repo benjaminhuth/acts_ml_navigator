@@ -43,9 +43,7 @@ build
 __pycache__
 
 # Data
-data/embeddings/
-data/logger/
-data/models/
+data/*
 
 # Acts
 timing.tsv

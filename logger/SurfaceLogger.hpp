@@ -120,8 +120,8 @@ struct SurfaceLogger
             if( s_valid_geoids.find(surface->geometryId()) != s_valid_geoids.end() )
                 push_back_edge(surface);
             
-            if( m_do_direction_manipulation )
-                state.stepping.pars.template segment<3>(Acts::eFreeDir0) = manipulate_direction(stepper.direction(state.stepping));
+//             if( m_do_direction_manipulation )
+//                 state.stepping.pars.template segment<3>(Acts::eFreeDir0) = manipulate_direction(stepper.direction(state.stepping));
             
             return;
         }
@@ -138,8 +138,8 @@ struct SurfaceLogger
                 // start of new edge
                 push_back_edge(surface);
                 
-                if( m_do_direction_manipulation )
-                    state.stepping.pars.template segment<3>(Acts::eFreeDir0) = manipulate_direction(stepper.direction(state.stepping));
+//                 if( m_do_direction_manipulation )
+//                     state.stepping.pars.template segment<3>(Acts::eFreeDir0) = manipulate_direction(stepper.direction(state.stepping));
             }
     }
 

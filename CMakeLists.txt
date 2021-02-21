@@ -48,6 +48,7 @@ include_directories(SYSTEM
     ${ACTS_ROOT}/Examples/Framework/include
     ${ACTS_ROOT}/Examples/Detectors/Common/include
     ${ACTS_ROOT}/Examples/Detectors/GenericDetector/include
+    ${ACTS_ROOT}/Examples/Detectors/TGeoDetector/include
     ${ACTS_ROOT}/Examples/Detectors/MagneticField/include
     ${ACTS_ROOT}/Examples/Run/Common/include
     ${ACTS_ROOT}/Examples/Algorithms/Propagation/include
@@ -66,6 +67,10 @@ add_library(ActsExamplesDetectorGeneric SHARED IMPORTED)
 add_dependencies(ActsExamplesDetectorGeneric ActsCore)
 set_target_properties(ActsExamplesDetectorGeneric PROPERTIES IMPORTED_LOCATION ${ACTS_BINARY_DIR}/lib64/libActsExamplesDetectorGeneric.so)
 
+add_library(ActsExamplesDetectorTGeo SHARED IMPORTED)
+add_dependencies(ActsExamplesDetectorTGeo ActsCore)
+set_target_properties(ActsExamplesDetectorTGeo PROPERTIES IMPORTED_LOCATION ${ACTS_BINARY_DIR}/lib64/libActsExamplesDetectorTGeo.so)
+
 add_library(ActsExamplesMagneticField SHARED IMPORTED)
 add_dependencies(ActsExamplesMagneticField ActsCore)
 set_target_properties(ActsExamplesMagneticField PROPERTIES IMPORTED_LOCATION ${ACTS_BINARY_DIR}/lib64/libActsExamplesMagneticField.so)
@@ -79,4 +84,5 @@ add_subdirectory(logger)
 add_subdirectory(utilities/geo_id_decoder)
 add_subdirectory(utilities/volume_name_extractor)
 add_subdirectory(utilities/kd_tree)
+add_subdirectory(utilities/interactive_track_viewer)
 add_subdirectory(navigator)

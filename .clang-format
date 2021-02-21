@@ -1,0 +1,72 @@
+IndentWidth: 4 
+Language: Cpp
+ColumnLimit: 80
+Standard: Latest
+
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: true
+AlignEscapedNewlines: Right
+AlignOperands: true
+AllowShortBlocksOnASingleLine: Empty
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortLambdasOnASingleLine: Inline
+AlwaysBreakAfterReturnType: None
+AlwaysBreakTemplateDeclarations: MultiLine
+BinPackArguments: true
+BinPackParameters: true
+
+# Brace wrapping
+BraceWrapping:
+    AfterCaseLabel: true
+    AfterClass: true
+    AfterControlStatement: Always
+    AfterEnum: true
+    AfterFunction: true
+    AfterNamespace: true
+    AfterStruct: true
+    AfterUnion: true
+    AfterExternBlock: true
+    BeforeCatch: true
+    BeforeElse: true
+    BeforeLambdaBody: true
+    SplitEmptyFunction: false
+    SplitEmptyRecord: false
+    SplitEmptyNamespace: false
+BreakBeforeBraces: Custom
+   
+BreakBeforeBinaryOperators: None
+BreakConstructorInitializers: AfterColon
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+Cpp11BracedListStyle: true
+FixNamespaceComments: false
+
+SortIncludes: true
+IncludeBlocks: Regroup
+IncludeCategories:
+  # Headers in <> without extension (standard library).
+  - Regex:           '<([A-Za-z0-9\/-_])+>'
+    Priority:        1
+  # Headers in <> from specific external libraries.
+  - Regex:           '<(spdlog|asio|nlohmann)\/([A-Za-z0-9.\/-_])+>'
+    Priority:        2
+  # Headers in <> from SFML
+  - Regex:           '<SFML\/([A-Za-z0-9.\/-_])+>'
+    Priority:        3
+  # Headers in <> with extension.
+  - Regex:           '<([A-Za-z0-9.\/-_])+>'
+    Priority:        4
+  # Headers in "" with extension.
+  - Regex:           '"([A-Za-z0-9.\/-_])+"'
+    Priority:        5
+
+IndentCaseLabels: true
+IndentPPDirectives: BeforeHash
+IndentWrappedFunctionNames: false
+NamespaceIndentation: None
+PointerAlignment: Right
+SpaceBeforeParens: Never
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceBeforeSquareBrackets: false
+SpaceInEmptyBlock: false
+SpacesInConditionalStatement: true
+SpacesInParentheses: false

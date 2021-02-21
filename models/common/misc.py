@@ -43,11 +43,9 @@ def parse_args_from_dictionary(dictionary):
     args = vars(parser.parse_args())
     
     # Handle 'show_config'
-    if args['show_config'] == True:
-        pprint.pprint(dictionary, width=2)
-        exit(0)
-        
+    show_config = (args['show_config'] == True)
     del args['show_config']
+        
     
     # Handle 'load_json'
     if args['load_json'] != None:
@@ -69,6 +67,10 @@ def parse_args_from_dictionary(dictionary):
             arg_type = type(dictionary[key])
             dictionary[key] = arg_type(value)
             
+    if show_config:
+        pprint.pprint(dictionary, width=2)
+        exit(0)
+            
     logging.info("Parsed %d command line arguments, run with the following params:", num_args)
         
     return dictionary
@@ -76,14 +78,15 @@ def parse_args_from_dictionary(dictionary):
 
 
 
-def init_options_and_logger(propagation_dir, output_dir, additional_options={}, log_level=logging.INFO, ):
+def init_options_and_logger(output_dir, additional_options={}, 
+                            propagation_dir_fn=get_navigation_training_dir, log_level=logging.INFO):
     '''
     Init general options and the logger. Also reads options from command line.
     
     Parameters:
-    * propagation_dir: directory to propagation data, usually config.get_navigation_training_dir(). If set to 'None', it is ignored.
-    * output_dir: where to store the results
+    * output_dir: where to store the results (modified with a detector subfolder)
     * [OPT] additional_options (dictionary): User specified options
+    * [OPT] propagation_dir_fn: function that returns the propagation data directory, when invoked with the detector
     * [OPT] log_level
     
     Returns:
@@ -100,21 +103,30 @@ def init_options_and_logger(propagation_dir, output_dir, additional_options={}, 
     for key, value in additional_options.items():
         options[key] = value
         
-    # Set output dir
-    options['output_dir'] = output_dir
-        
+    # Read args from command line
     options = parse_args_from_dictionary(options)
     
+    # Set output dir
+    options['output_dir'] = os.path.join(output_dir, options['detector'])
+    assert os.path.exists(options['output_dir'])
+    
+    # Some assertions
+    assert options['bpsplit_method'] == 'uniform' or options['bpsplit_method'] == 'density'
+    assert options['detector'] == 'generic' or options['detector'] == 'itk'
+    
+    # get detector file
+    options['detector_file'] = get_detector_file(options['detector'])
+    assert os.path.exists(options['detector_file'])
+    
     # Resolve 'propagation_file' from 'prop_data_size'
-    if propagation_dir != None:
-        assert os.path.exists(propagation_dir)
-        propagation_files = extract_propagation_data(propagation_dir)
-        
-        if options['prop_data_size'] in propagation_files:
-            options['propagation_file'] = propagation_files[ options['prop_data_size'] ]
-        else:
-            logging.error("Could not find a propagation dataset with %d Acts events", options['prop_data_size'])
-            exit(1)
+    assert os.path.exists(propagation_dir_fn(options['detector']))
+    propagation_files = extract_propagation_data(propagation_dir_fn(options['detector']))
+    
+    if options['prop_data_size'] in propagation_files:
+        options['propagation_file'] = propagation_files[ options['prop_data_size'] ]
+    else:
+        logging.error("Could not find a propagation dataset with %d Acts events", options['prop_data_size'])
+        exit(1)
     
     # Print configuration
     pprint.pprint(options, width=2)
@@ -128,11 +140,6 @@ def init_options_and_logger(propagation_dir, output_dir, additional_options={}, 
     logging.info("tensorflow devices: %s", tensorflow_devices)
     if not 'GPU' in tensorflow_devices and not options['disable_gpu']:
         logging.warning(">>> NO GPU AVAILABLE! <<<")
-        
-    # Some assertions
-    assert options['bpsplit_method'] == 'uniform' or options['bpsplit_method'] == 'density'
-    assert os.path.exists(options['detector_file'])
-    assert os.path.exists(options['output_dir'])
         
     # Return the processed options
     return options
@@ -326,7 +333,7 @@ def nn_index_matches_embedding_model(embedding_model, nn, num_tests=100, is_kera
 
 
 
-def export_results(output_filename, model, figure, options):
+def export_results(output_filename, model, figure, options, rzmap):
     '''
     Exports all necessary things, if options['export'] is true.
     Also converts options['bpsplit_z'] from list back to int
@@ -336,6 +343,7 @@ def export_results(output_filename, model, figure, options):
     * model: the keras model
     * figure: matplotlib figure
     * options: the options dictionary
+    * rzmap (pandas df): dataframe with rz map
     '''
     
     assert os.path.exists(options['output_dir'])
@@ -351,16 +359,28 @@ def export_results(output_filename, model, figure, options):
     figure.savefig(output_filename + ".png")
     logging.info("exported chart to '%s.png'", output_filename)
     
+    rzmap.to_csv(output_filename + ".csv")
+    logging.info("export rzmap table to '%s.csv'", output_filename)
+    
     with open(output_filename + '.json','w') as conf_file:
         json.dump(options, conf_file, indent=4)
     logging.info("Exported configuration to '%s.json'", output_filename)
+    
+    
 
 
 
 def export_embedding_file(output_filename, detector_file, embedding_model, total_bp_split):
     '''
+    Export a embedding to a csv file.
     
+    Parameters:
+    * output_filename (string): Should be something like *.csv
+    * detector_file (string)
+    * embedding_model: Keras model for embedding
+    * total_bp_split: bpsplit_z * bpsplit_phi
     '''
+    assert os.path.exists(detector_file)
     
     geo_ids = pd.read_csv(detector_file, dtype={'geo_id': np.uint64})['geo_id'].to_numpy()[1:]
     total_node_num = len(geo_ids) + total_bp_split

@@ -153,6 +153,55 @@ def neighbor_accuracy_detailed(y_true,y_pred, nn):
 
 
 
+def add_subplot_zoom(figure):
+    '''
+    Allows to shift+click subplot to zoom on it.
+    Source: https://stackoverflow.com/questions/44997029/matplotlib-show-single-graph-out-of-object-of-subplots
+    '''
+    zoomed_axes = [None]
+    def on_click(event):
+        ax = event.inaxes
+
+        if ax is None:
+            # occurs when a region not in an axis is clicked...
+            return
+
+        # we want to allow other navigation modes as well. Only act in case
+        # shift was pressed and the correct mouse button was used
+        if event.key != 'shift' or event.button != 1:
+            return
+
+        if zoomed_axes[0] is None:
+            # not zoomed so far. Perform zoom
+
+            # store the original position of the axes
+            zoomed_axes[0] = (ax, ax.get_position())
+            ax.set_position([0.1, 0.1, 0.85, 0.85])
+
+            # hide all the other axes...
+            for axis in event.canvas.figure.axes:
+                if axis is not ax:
+                    axis.set_visible(False)
+
+        else:
+            # restore the original state
+
+            zoomed_axes[0][0].set_position(zoomed_axes[0][1])
+            zoomed_axes[0] = None
+
+            # make other axes visible again
+            for axis in event.canvas.figure.axes:
+                axis.set_visible(True)
+
+        # redraw to make changes visible.
+        event.canvas.draw()
+
+    figure.canvas.mpl_connect('button_press_event', on_click)
+
+
+
+
+
 def evaluate_and_plot(tracks_edges_start, tracks_params, 
                       tracks_edges_target, history, 
                       evaluate_edge_fn, 
@@ -183,6 +232,7 @@ def evaluate_and_plot(tracks_edges_start, tracks_params,
     logging.info("Started evaluation of test data")
     
     max_track_length = max([ len(track) for track in tracks_edges_start ])
+    total_num_edges = sum([ len(track) for track in tracks_edges_start ])
     
     # Initialize the result
     EvaluationResult = collections.namedtuple("EvaluationResult", ["score_matrix", "beampipe_scores", "rzmap"])
@@ -312,8 +362,10 @@ def evaluate_and_plot(tracks_edges_start, tracks_params,
     #else:
         #ax[1,2].text(0.2,0.5,"no relative_score to plot")
         
+        
     # R-Z-Map
-    rzmap = np.vstack(result.rzmap)
+    rzmap_df = pd.DataFrame(columns=['pos_in_track', 'r', 'z', 'score'], data=result.rzmap)
+    rzmap = rzmap_df[['r','z','score']].to_numpy().astype(float)
     
     # Make NN index
     rz_nn = NearestNeighbors(n_jobs=16)
@@ -335,7 +387,7 @@ def evaluate_and_plot(tracks_edges_start, tracks_params,
             if len(nbs) > 0:
                 rzmap[idx,2] = sum([ rzmap[n,2] for n in nbs ]) / len(nbs)
                 
-            progress_bar.print_bar()
+            progress_bar.print_bar()    
     
     # Throw away all not selected entries
     rzmap = rzmap[idxs]
@@ -358,7 +410,9 @@ def evaluate_and_plot(tracks_edges_start, tracks_params,
     for i in range(len(mapdata)):
         ax[1,2].scatter(mapdata[i][:,1], mapdata[i][:,0], color=get_colors()[i])
     
-    return fig, ax, float(np.sum(result.score_matrix['in1'].to_numpy())/total_num_edges)
+    add_subplot_zoom(fig)
+    
+    return fig, ax, float(np.sum(result.score_matrix['in1'].to_numpy())/total_num_edges), rzmap_df
 
 
 
@@ -408,6 +462,8 @@ def fill_in_results(pos_in_track, score, surface_z_coord, trk_params, result, nu
         result.score_matrix.loc[pos_in_track, 'num_edges_min'] = \
             min(result.score_matrix.loc[pos_in_track, 'num_edges_min'], num_targets)
         
-    result.rzmap.append(np.array([ np.sqrt(trk_params[0]**2 + trk_params[1]**2), trk_params[2], score ]))
+    #idx = len(result.rzmap.index)
+    #result.rzmap.loc[idx] = [ pos_in_track, np.sqrt(trk_params[0]**2 + trk_params[1]**2), trk_params[2], score ]
+    result.rzmap.append((pos_in_track, np.sqrt(trk_params[0]**2 + trk_params[1]**2), trk_params[2], score))
     
     return result

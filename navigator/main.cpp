@@ -109,6 +109,23 @@ int main(int argc, char **argv)
     },
     bFieldVar);
     
+    std::string outputDir = vm["output-dir"].template as<std::string>();
+    auto psCollection = vm["prop-step-collection"].as<std::string>();
+    
+  
+//     if (vm["output-csv"].template as<bool>()) {
+//         using Writer = ActsExamples::CsvPropagationStepsWriter;
+//         
+//         Writer::Config config;
+//         config.collection = psCollection;
+//         config.outputDir = outputDir;
+//         
+//         sequencer.addWriter(std::make_shared<Writer>(config));
+//     }
+    
     // run sequencer
     return sequencer.run();
+    
+    
+    
 }

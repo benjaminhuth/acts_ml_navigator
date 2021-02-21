@@ -242,8 +242,7 @@ def generate_train_data_from_graph(true_samples_tracks, graph_edge_map, max_fals
 #####################
 
 def main():
-    options = init_options_and_logger(get_navigation_training_dir(),
-                                      os.path.join(get_root_dir(), "models/pairwise_score_navigator_pre/"),
+    options = init_options_and_logger(os.path.join(get_root_dir(), "models/pairwise_score_navigator_pre/"),
                                       { 'data_gen_method': 'graph', 'graph_gen_false_per_true': 2 })
     
     assert options['data_gen_method'] == 'graph' or options['data_gen_method'] == 'false_sim'
@@ -255,7 +254,7 @@ def main():
         logging.info("Load false samples from '%s'", options['propagation_file_false'])
     
     # Embedding import
-    embedding_dir = os.path.join(get_root_dir(), 'models/embeddings/')
+    embedding_dir = os.path.join(get_root_dir(), 'models/embeddings/', options['detector'])
     
     if not options['use_real_space_as_embedding']:
         embedding_info = extract_embedding_model(embedding_dir, options['embedding_dim'], options['bpsplit_z'],
@@ -416,7 +415,7 @@ def main():
         'smooth_radius': options['eval_smooth_rzmap_radius'],
     }
         
-    fig, axes, score = evaluate_and_plot(**evaluation_params)
+    fig, axes, score, rzmap = evaluate_and_plot(**evaluation_params)
         
     # Summary title and data info 
     data_gen_str = "gen: simulated" if options['data_gen_method'] == 'false_sim' else "gen: graph ({})".format(options['graph_gen_false_per_true'])
@@ -447,7 +446,7 @@ def main():
     acc_str    = "-acc{}".format(round(score*100))
     output_file = os.path.join(options['output_dir'], date_str + emb_str + method_str + size_str + acc_str)
 
-    export_results(output_file, navigation_model, fig, options)    
+    export_results(output_file, navigation_model, fig, options, rzmap)    
     
         
 if __name__ == "__main__":

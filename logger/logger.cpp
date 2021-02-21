@@ -22,6 +22,7 @@
 #include <ActsExamples/Plugins/BField/ScalableBField.hpp>
 #include <ActsExamples/Propagation/PropagationOptions.hpp>
 #include <ActsExamples/Utilities/Paths.hpp>
+#include <ActsExamples/TGeoDetector/TGeoDetector.hpp>
 
 // My own propagation algorithm
 #include "MyPropagationAlgorithm.hpp"
@@ -31,9 +32,8 @@ decltype(SurfaceLogger::s_valid_geoids) SurfaceLogger::s_valid_geoids;
 
 int main(int argc, char **argv) 
 {
-    GenericDetector detector;
-    std::vector<std::pair<Acts::GeometryIdentifier,std::string>> surface_volume_names;
-    surface_volume_names.reserve(20'000);
+    GenericDetector generic_detector;
+    TGeoDetector tgeo_detector;
     
     auto desc = ActsExamples::Options::makeDefaultOptions();
     ActsExamples::Options::addSequencerOptions(desc);
@@ -44,46 +44,55 @@ int main(int argc, char **argv)
     ActsExamples::Options::addPropagationOptions(desc);
     ActsExamples::Options::addOutputOptions(desc);
     
-    desc.add_options()("gen_false_samples", 
-                       boost::program_options::value<bool>()->default_value(false), 
-                       "generate false samples by manipulating the direction on each surface")
-                      ("gen_false_samples_angle_diff_min", 
-                       boost::program_options::value<double>()->default_value(10.), 
-                       "minimum angle the manipulated direction differs from the original one (in degree)")
-                      ("gen_false_samples_angle_diff_max", 
-                       boost::program_options::value<double>()->default_value(30.), 
-                       "maximum angle the manipulated direction differs from the original one (in degree)");
+    desc.add_options()
+//         ("gen-false-samples",
+//          boost::program_options::value<bool>()->default_value(false),
+//          "generate false samples by manipulating the direction on each surface")
+//         ("gen-false-samples-angle-diff-min", 
+//         boost::program_options::value<double>()->default_value(10.), 
+//         "minimum angle the manipulated direction differs from the original one (in degree)")
+//         ("gen-false-samples-angle-diff_max", 
+//         boost::program_options::value<double>()->default_value(30.), 
+//         "maximum angle the manipulated direction differs from the original one (in degree)")
+        ("detector-type", boost::program_options::value<std::string>()->default_value("generic"), "'generic' or 'tgeo'");
 
-    // Add specific options for this geometry
-    detector.addOptions(desc);
+    // Add specific options for detectors
+    generic_detector.addOptions(desc);
+    tgeo_detector.addOptions(desc);
     auto vm = ActsExamples::Options::parse(desc, argc, argv);
     if (vm.empty()) 
     {
         return EXIT_FAILURE;
     }
     
+    // Which detector?
+    throw_assert(vm["detector-type"].as<std::string>() == "generic" || vm["detector-type"].as<std::string>() == "tgeo", "dtector type must be 'generic' or 'tgeo'");
+    
+    ActsExamples::IBaseDetector *detector;
+    if( vm["detector-type"].as<std::string>() == "generic" )
+        detector = &generic_detector;
+    else
+        detector = &tgeo_detector;
+    
+    // Sequencer configuration    
     const auto sequencer_config = ActsExamples::Options::readSequencerConfig(vm);
     ActsExamples::Sequencer sequencer(sequencer_config);
     
     auto logLevel = ActsExamples::Options::readLogLevel(vm);
 
     // The geometry, material and decoration
-    auto geometry = ActsExamples::Geometry::build(vm, detector);
+    auto geometry = ActsExamples::Geometry::build(vm, *detector);
     auto tGeometry = geometry.first;
     auto contextDecorators = geometry.second;
     for (auto cdr : contextDecorators) {
         sequencer.addContextDecorator(cdr);
     }
     
-    // init set of sensitive surfaces in SurfaceLogger
+    // init set of sensitive surfaces in SurfaceLogger     
     SurfaceLogger::s_valid_geoids.insert(tGeometry->getBeamline()->geometryId());
     tGeometry->visitSurfaces([&](const Acts::Surface* surface)
     {
-        SurfaceLogger::s_valid_geoids.insert(surface->geometryId());  
-        
-        if( auto layer = surface->associatedLayer(); layer )
-            if( auto tvolume = layer->trackingVolume(); tvolume )
-                surface_volume_names.push_back(std::make_pair(surface->geometryId(), tvolume->volumeName()));
+        SurfaceLogger::s_valid_geoids.insert(surface->geometryId());
     });
 
     // Create the random number engine
@@ -115,17 +124,17 @@ int main(int argc, char **argv)
         pAlgConfig.randomNumberSvc = randomNumberSvc;
         
         std::optional<std::pair<double,double>> do_dir_manip;
-        if( vm["gen_false_samples"].as<bool>() )
-        {
-            std::cout << "Enabled direction manipulation ("
-                      << vm["gen_false_samples_angle_diff_min"].as<double>() << ", "
-                      << vm["gen_false_samples_angle_diff_max"].as<double>() << ")!" << std::endl;
-            
-            do_dir_manip = {
-                vm["gen_false_samples_angle_diff_min"].as<double>(),
-                vm["gen_false_samples_angle_diff_max"].as<double>()
-            };
-        }
+//         if( vm["gen-false-samples"].as<bool>() )
+//         {
+//             std::cout << "Enabled direction manipulation ("
+//                       << vm["gen-false-samples-angle-diff-min"].as<double>() << ", "
+//                       << vm["gen-false-samples-angle-diff-max"].as<double>() << ")!" << std::endl;
+//             
+//             do_dir_manip = {
+//                 vm["gen-false-samples-angle-diff_min"].as<double>(),
+//                 vm["gen-false-samples-angle-diff_max"].as<double>()
+//             };
+//         }
         
         sequencer.addAlgorithm(std::make_shared<MyPropagationAlgorithm<Propagator>>(pAlgConfig, logLevel, do_dir_manip));
     },

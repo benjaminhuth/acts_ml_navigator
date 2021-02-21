@@ -165,7 +165,7 @@ PropagationOutput MyPropagationAlgorithm<propagator_t>::executeTest(
     
     // Action list and abort list WITH NEW LOGGER
     using ActionList = Acts::ActionList<SteppingLogger, MaterialInteractor, SurfaceLogger>;
-    using AbortList = Acts::AbortList<EndOfWorld, TrackMLBoundaryAborter>;
+    using AbortList = Acts::AbortList<EndOfWorld/*, TrackMLBoundaryAborter*/>;
     using PropagatorOptions =
         Acts::DenseStepperPropagatorOptions<ActionList, AbortList>;
 
@@ -183,13 +183,13 @@ PropagationOutput MyPropagationAlgorithm<propagator_t>::executeTest(
     mInteractor.energyLoss = m_cfg.energyLoss;
     mInteractor.recordInteractions = m_cfg.recordMaterialInteractions;
     
-    if( m_direction_manipulation_config )
-    {
-        auto& surfaceLogger = options.actionList.get<SurfaceLogger>();
-        surfaceLogger.m_do_direction_manipulation = true;
-        surfaceLogger.m_angle_diff_min = m_direction_manipulation_config->first;
-        surfaceLogger.m_angle_diff_max = m_direction_manipulation_config->second;
-    }
+//     if( m_direction_manipulation_config )
+//     {
+//         auto& surfaceLogger = options.actionList.get<SurfaceLogger>();
+//         surfaceLogger.m_do_direction_manipulation = true;
+//         surfaceLogger.m_angle_diff_min = m_direction_manipulation_config->first;
+//         surfaceLogger.m_angle_diff_max = m_direction_manipulation_config->second;
+//     }
     
 
     // Set a maximum step size

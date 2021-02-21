@@ -105,6 +105,8 @@ struct AllINeedForMLNavigation
     std::vector<double> bpsplitBounds;
 };
 
+
+
 class MLNavigator
 {    
 public:
