@@ -41,7 +41,7 @@ def evaluate_edge(pos, start, target, param, result, graph_map):
     correct_pos = int(np.argwhere(np.equal(targets,target)))
     
     # Fill abs_score_matrix
-    return fill_in_results(pos, correct_pos, node_data.position[2], result,  len(targets))
+    return fill_in_results(pos, correct_pos, node_data.position[2], param, result, len(targets))
 
 
 
@@ -50,8 +50,7 @@ def evaluate_edge(pos, start, target, param, result, graph_map):
 #####################
 
 def main():
-    options = init_options_and_logger(get_navigation_training_dir(),
-                                      os.path.join(get_root_dir(), "models/weighted_graph_navigator/"))   
+    options = init_options_and_logger(os.path.join(get_root_dir(), "models/weighted_graph_navigator/"))   
 
     ###############
     # Import data #
@@ -69,20 +68,29 @@ def main():
     prop_data = geoid_to_ordinal_number(prop_data, detector_data, total_node_num)
     
     # Categorize into tracks (also needed for testing later)
-    tracks_start, track_params, tracks_end = categorize_into_tracks(prop_data, total_node_num, ['dir_x', 'dir_y', 'dir_z'])
+    pars_list = ['pos_x', 'pos_y', 'pos_z', 'dir_x', 'dir_y', 'dir_z', 'qop']
+    tracks_start, track_params, tracks_end = categorize_into_tracks(prop_data, total_node_num, pars_list)
     
     # Make graph
     graph_edge_map = make_graph_map(prop_data, total_node_num)
     
     logging.info("Imported %d tracks, the maximum sequence length is %d",
                  len(tracks_start), max([ len(track) for track in tracks_start ]))
-
+    
+    # Only take test_split from data (to save time and so on...)
+    num_samples = int(options['test_split'] * len(tracks_start))
+    
+    tracks_start = tracks_start[0:num_samples]
+    track_params = track_params[0:num_samples]
+    tracks_end = tracks_end[0:num_samples]
+    
+    logging.info("Take %d samples from the data", num_samples)
 
     ##############
     # Evaluation #
     ##############
     
-    fig, axes, score = evaluate_and_plot(tracks_start, track_params, tracks_end, {},
+    fig, axes, score, rzmap = evaluate_and_plot(tracks_start, track_params, tracks_end, {},
                                          lambda a,b,c,d,e: evaluate_edge(a,b,c,d,e,graph_edge_map))
     
     bpsplit_str = "bp split: z={}, phi={}".format(options['bpsplit_z'],options['bpsplit_phi'])
@@ -99,13 +107,16 @@ def main():
     date_str   = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
     size_str   = "-n{}".format(options['prop_data_size'])
     acc_str    = "-acc{}".format(round(score*100))
-    output_filename = date_str + size_str + acc_str
+    output_path = os.path.join(options['output_dir'], date_str + size_str + acc_str)
 
     if options['export']:
-        fig.savefig(options['output_dir'] + output_filename + ".png")
-        logging.info("exported chart to '" + options['output_dir'] + output_filename + ".png" + "'")
+        fig.savefig(output_path + ".png")
+        logging.info("exported chart to '%s.png'", output_path)
+        
+        rzmap.to_csv(output_path + ".csv")
+        logging.info("exported rz-map to '%s.csv'", output_path)
     else:
-        logging.info("output filename would be: '%s'",output_filename)
+        logging.info("output filename would be: '%s'",output_path)
 
 
 

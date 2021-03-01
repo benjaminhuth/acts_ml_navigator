@@ -356,7 +356,7 @@ def export_results(output_filename, model, figure, options, rzmap):
     model.save(output_filename)
     logging.info("exported model to '%s'", output_filename)
 
-    figure.savefig(output_filename + ".png")
+    figure.savefig(output_filename + ".png", dpi=400)
     logging.info("exported chart to '%s.png'", output_filename)
     
     rzmap.to_csv(output_filename + ".csv")

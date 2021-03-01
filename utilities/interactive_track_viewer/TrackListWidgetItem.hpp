@@ -11,7 +11,7 @@
 
 struct TrackListWidgetItem : public QListWidgetItem
 {
-    using TrackPtr = const std::pair<float, std::span<RowTuple>> *;
+    using TrackPtr = const std::pair<double, std::span<RowTuple>> *;
 
     const TrackPtr track = nullptr;
 

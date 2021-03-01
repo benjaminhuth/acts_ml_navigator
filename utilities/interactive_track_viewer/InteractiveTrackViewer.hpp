@@ -21,12 +21,12 @@ class InteractiveTrackViewer : public QMainWindow
 {
     Q_OBJECT
 
-    const std::size_t m_num_background_data = 10000ul; // 100'000ul;
+    const std::size_t m_num_background_data = 30000ul; // 100'000ul;
 
     std::mt19937 m_rnd_gen;
 
     std::vector<RowTuple> m_data;
-    std::vector<std::pair<float, std::span<RowTuple>>> m_tracks;
+    std::vector<std::pair<double, std::span<RowTuple>>> m_tracks;
 
     QtCharts::QChartView *m_chart_view;
     QtCharts::QChart *m_chart;
@@ -41,4 +41,6 @@ class InteractiveTrackViewer : public QMainWindow
   private slots:
     void open();
     void exit();
+    
+    void display_track(const std::span<RowTuple> &track);
 };

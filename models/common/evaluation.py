@@ -31,6 +31,14 @@ def get_colors():
     ]
 
 
+def get_score_categories():
+    '''
+    Returns a list with the score categoires
+    '''
+    return ['correct ','in best 2','in best 3','in best 5','in best 10','worse']
+
+
+
 def autolabel(ax, rects):
     """
     From: https://matplotlib.org/3.2.1/gallery/lines_bars_and_markers/barchart.html
@@ -201,6 +209,62 @@ def add_subplot_zoom(figure):
 
 
 
+def make_2d_score_map(data, do_smoothing, smooth_radius):
+    '''
+    Makes a 2d map of scores with optional smoothing
+    
+    Parameters:
+    * ndarray (ndarray with shape Nx3)
+    * do_smoothing (bool)
+    * smooth_radius (int)
+    
+    Returns:
+    * list of 2D-ndarray (for each score category one)
+    '''
+    
+    assert data.shape[1] == 3
+    
+    # Make NN index
+    rz_nn = NearestNeighbors(n_jobs=8)
+    rz_nn.fit(data[:,0:2])
+    
+    # Select random elements to plot (to avoid to long computations)
+    idxs = np.arange(len(data))
+    np.random.shuffle(idxs)
+    idxs = idxs[0:min(len(data),100000)]
+    
+    # Smooth plot
+    if do_smoothing:
+        logging.info("Smoothing plot")
+        neighbors = rz_nn.radius_neighbors(data[idxs][:,0:2],radius=smooth_radius,return_distance=False)
+        
+        progress_bar = ProgressBar(len(idxs))
+        
+        for idx, nbs in zip(idxs, neighbors):
+            if len(nbs) > 0:
+                data[idx,2] = sum([ data[n,2] for n in nbs ]) / len(nbs)
+                
+            progress_bar.print_bar()    
+    
+    # Throw away all not selected entries
+    data = data[idxs]
+    
+    # Sort into categories
+    categories = [0,1,2,3,5,10]
+    mapdata = []
+    
+    for i in range(len(categories)-1):
+        mask = np.greater_equal(data[:,2], categories[i]) & np.less(data[:,2], categories[i+1])
+        mapdata.append(data[mask][:,0:2])
+    
+    mask = np.greater_equal(data[:,2], categories[-1])
+    mapdata.append(data[mask][:,0:2])
+    
+    return mapdata
+
+
+
+
 
 def evaluate_and_plot(tracks_edges_start, tracks_params, 
                       tracks_edges_target, history, 
@@ -235,14 +299,14 @@ def evaluate_and_plot(tracks_edges_start, tracks_params,
     total_num_edges = sum([ len(track) for track in tracks_edges_start ])
     
     # Initialize the result
-    EvaluationResult = collections.namedtuple("EvaluationResult", ["score_matrix", "beampipe_scores", "rzmap"])
+    EvaluationResult = collections.namedtuple("EvaluationResult", ["score_matrix", "beampipe_scores", "score_spacepoint_list"])
     
-    columns = ['in1','in2','in3','in5','in10','other','num_edges','num_edges_max','num_edges_min','relative_score']
+    columns = get_score_categories() + ['num_edges','num_edges_max','num_edges_min','relative_score']
     result = EvaluationResult(
         pd.DataFrame(data = np.zeros((max_track_length, len(columns))),
                      index=np.arange(max_track_length),
                      columns=columns),
-        { 'in1': [], 'in2': [], 'in3': [], 'in5': [], 'in10': [], 'other': [] },
+        { category: [] for category in get_score_categories() },
         []
     )
     
@@ -259,14 +323,16 @@ def evaluate_and_plot(tracks_edges_start, tracks_params,
         progress_bar.print_bar()
     
     # Normalize
-    hits_per_pos = np.sum(result.score_matrix[['in1','in2','in3','in5','in10','other']].values, axis=1)
-    total_num_edges = np.sum(result.score_matrix[['in1','in2','in3','in5','in10','other']].values.flatten())
+    hits_per_pos = np.sum(result.score_matrix[get_score_categories()].values, axis=1)
+    total_num_edges = np.sum(result.score_matrix[get_score_categories()].values.flatten())
     
     assert hits_per_pos.all() > 0
     assert total_num_edges > 0
     
     result.score_matrix['relative_score'] = result.score_matrix['relative_score'].to_numpy() / hits_per_pos
     result.score_matrix['num_edges'] = result.score_matrix['num_edges'].to_numpy() / hits_per_pos
+    
+    score_spacepoint_df = pd.DataFrame(columns=['pos_in_track', 'x', 'y', 'z', 'score'], data=result.score_spacepoint_list)
     
     ############
     # Plotting #
@@ -309,23 +375,23 @@ def evaluate_and_plot(tracks_edges_start, tracks_params,
     
     
     # Plot absolute distribution (in total)    
-    for i, (name, series) in enumerate(result.score_matrix[['in1','in2','in3','in5','in10','other']].iteritems()):
+    for i, (name, series) in enumerate(result.score_matrix[get_score_categories()].iteritems()):
         res = np.sum(series.to_numpy())
         norm_res = res / total_num_edges
         rects = ax[0,2].bar(i,norm_res,color=get_colors()[i])
         autolabel(ax[0,2], rects)
         
-    ax[0,2].set_title("Score (all edges)")
-    ax[0,2].set_xlabel("score bins")
-    ax[0,2].set_ylabel("absolute score")
+    ax[0,2].set_title("Score overview")
+    ax[0,2].set_ylabel("fraction of test samples")
+    ax[0,2].xaxis.set_visible(False)
     ax[0,2].set_ylim([0,1])
-    ax[0,2].legend(columns)
+    ax[0,2].legend(get_score_categories())
     
     # Plot distribution per track pos
     current = np.zeros(max_track_length)
-    for i, (name, series) in enumerate(result.score_matrix[['in1','in2','in3','in5','in10','other']].iteritems()):
+    for i, (name, series) in enumerate(result.score_matrix[get_score_categories()].iteritems()):
         # dont plot 'other'
-        if columns[i] == 'other':
+        if i == len(get_score_categories()) - 1 :
             break
         
         current += series.to_numpy() / hits_per_pos
@@ -335,7 +401,7 @@ def evaluate_and_plot(tracks_edges_start, tracks_params,
     ax[1,0].set_xlabel("track position")
     ax[1,0].set_ylabel("score")
     ax[1,0].set_ylim([0,1.1])
-    ax[1,0].legend(columns)
+    ax[1,0].legend(get_score_categories())
         
     # Plot beampipe score historgram
     surf_coords = np.unique(np.hstack(list(result.beampipe_scores.values())))
@@ -364,55 +430,28 @@ def evaluate_and_plot(tracks_edges_start, tracks_params,
         
         
     # R-Z-Map
-    rzmap_df = pd.DataFrame(columns=['pos_in_track', 'r', 'z', 'score'], data=result.rzmap)
-    rzmap = rzmap_df[['r','z','score']].to_numpy().astype(float)
     
-    # Make NN index
-    rz_nn = NearestNeighbors(n_jobs=16)
-    rz_nn.fit(rzmap[:,0:2])
-    
-    # Select random elements to plot (to avoid to long computations)
-    idxs = np.arange(len(rzmap))
-    np.random.shuffle(idxs)
-    idxs = idxs[0:min(len(rzmap),100000)]
-    
-    # Smooth plot
-    if smooth_rzmap:
-        logging.info("Smoothing R-Z-Map")
-        neighbors = rz_nn.radius_neighbors(rzmap[idxs][:,0:2],radius=smooth_radius,return_distance=False)
-        
-        progress_bar = ProgressBar(len(idxs))
-        
-        for idx, nbs in zip(idxs, neighbors):
-            if len(nbs) > 0:
-                rzmap[idx,2] = sum([ rzmap[n,2] for n in nbs ]) / len(nbs)
-                
-            progress_bar.print_bar()    
-    
-    # Throw away all not selected entries
-    rzmap = rzmap[idxs]
-    
-    # Sort into categories
-    categories = [0,1,2,3,5,10]
-    mapdata = []
-    
-    for i in range(len(categories)-1):
-        mask = np.greater_equal(rzmap[:,2], categories[i]) & np.less(rzmap[:,2], categories[i+1])
-        mapdata.append(rzmap[mask][:,0:2])
-    
-    mask = np.greater_equal(rzmap[:,2], categories[-1])
-    mapdata.append(rzmap[mask][:,0:2])
     
     # Plot
-    ax[1,2].set_title("RZ-map")
+    xy_coords = score_spacepoint_df[['x','y']].to_numpy().astype(float)
+    r_coords = np.sqrt(xy_coords[:,0]**2 + xy_coords[:,1]**2)
+    rzmap_data = np.vstack([
+        r_coords,
+        score_spacepoint_df['z'].to_numpy().astype(float),
+        score_spacepoint_df['score'].to_numpy().astype(float),
+    ]).T
+    
+    
+    rzmap = make_2d_score_map(rzmap_data, smooth_rzmap, smooth_radius)    
+    ax[1,2].set_title("Smoothed r-z plot" if smooth_rzmap else "r-z plot")
     ax[1,2].set_xlabel("z")
     ax[1,2].set_ylabel("r")
-    for i in range(len(mapdata)):
-        ax[1,2].scatter(mapdata[i][:,1], mapdata[i][:,0], color=get_colors()[i])
+    for i in range(len(rzmap)):
+        ax[1,2].scatter(rzmap[i][:,1], rzmap[i][:,0], color=get_colors()[i], s=5)
     
     add_subplot_zoom(fig)
     
-    return fig, ax, float(np.sum(result.score_matrix['in1'].to_numpy())/total_num_edges), rzmap_df
+    return fig, ax, float(np.sum(result.score_matrix[get_score_categories()[0]].to_numpy())/total_num_edges), score_spacepoint_df
 
 
 
@@ -432,26 +471,27 @@ def fill_in_results(pos_in_track, score, surface_z_coord, trk_params, result, nu
     Returns:
     * EvaluationResult: modified result type
     '''
-    assert len(trk_params) == 7
+    
+    cs = get_score_categories()
     
     if score == 0: 
-        result.score_matrix.loc[pos_in_track, 'in1'] += 1
-        if pos_in_track == 0: result.beampipe_scores['in1'].append( surface_z_coord )
+        result.score_matrix.loc[pos_in_track, cs[0]] += 1
+        if pos_in_track == 0: result.beampipe_scores[cs[0]].append( surface_z_coord )
     elif score == 1: 
-        result.score_matrix.loc[pos_in_track, 'in2'] += 1
-        if pos_in_track == 0: result.beampipe_scores['in2'].append( surface_z_coord )
+        result.score_matrix.loc[pos_in_track, cs[1]] += 1
+        if pos_in_track == 0: result.beampipe_scores[cs[1]].append( surface_z_coord )
     elif score == 2: 
-        result.score_matrix.loc[pos_in_track, 'in3'] += 1
-        if pos_in_track == 0: result.beampipe_scores['in3'].append( surface_z_coord )
+        result.score_matrix.loc[pos_in_track, cs[2]] += 1
+        if pos_in_track == 0: result.beampipe_scores[cs[2]].append( surface_z_coord )
     elif score < 5: 
-        result.score_matrix.loc[pos_in_track, 'in5'] += 1
-        if pos_in_track == 0: result.beampipe_scores['in5'].append( surface_z_coord )
+        result.score_matrix.loc[pos_in_track, cs[3]] += 1
+        if pos_in_track == 0: result.beampipe_scores[cs[3]].append( surface_z_coord )
     elif score < 10:
-        result.score_matrix.loc[pos_in_track, 'in10'] += 1
-        if pos_in_track == 0: result.beampipe_scores['in10'].append( surface_z_coord )
+        result.score_matrix.loc[pos_in_track, cs[4]] += 1
+        if pos_in_track == 0: result.beampipe_scores[cs[4]].append( surface_z_coord )
     else: 
-        result.score_matrix.loc[pos_in_track, 'other'] += 1
-        if pos_in_track == 0: result.beampipe_scores['other'].append( surface_z_coord )
+        result.score_matrix.loc[pos_in_track, cs[5]] += 1
+        if pos_in_track == 0: result.beampipe_scores[cs[4]].append( surface_z_coord )
     
     if num_targets != None:
         result.score_matrix.loc[pos_in_track, 'num_edges'] += num_targets
@@ -464,6 +504,6 @@ def fill_in_results(pos_in_track, score, surface_z_coord, trk_params, result, nu
         
     #idx = len(result.rzmap.index)
     #result.rzmap.loc[idx] = [ pos_in_track, np.sqrt(trk_params[0]**2 + trk_params[1]**2), trk_params[2], score ]
-    result.rzmap.append((pos_in_track, np.sqrt(trk_params[0]**2 + trk_params[1]**2), trk_params[2], score))
+    result.score_spacepoint_list.append((pos_in_track, trk_params[0], trk_params[1], trk_params[2], score))
     
     return result

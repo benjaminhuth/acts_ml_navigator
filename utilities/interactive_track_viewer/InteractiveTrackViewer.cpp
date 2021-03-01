@@ -5,18 +5,22 @@
 #include <QChartView>
 #include <QFileDialog>
 #include <QHBoxLayout>
-#include <QVBoxLayout>
+#include <QLegendMarker>
 #include <QListWidget>
 #include <QMenuBar>
-#include <QLegendMarker>
 #include <QMessageBox>
 #include <QScatterSeries>
 #include <QToolBar>
+#include <QVBoxLayout>
+#include <QStatusBar>
+#include <QDesktopWidget>
+
 #include <fstream>
 
 #include <spdlog/spdlog.h>
 
 #include "TrackListWidgetItem.hpp"
+#include "SeriesSelectDialog.hpp"
 #include "csv.hpp"
 
 const std::vector<std::pair<const char *, QColor>> series_properties = {
@@ -28,8 +32,8 @@ const std::vector<std::pair<const char *, QColor>> series_properties = {
     {"other", QColor("#737373")}, // Gray
 };
 
-
-void append_to_series_vector(auto row_tuple_container, std::vector<QtCharts::QScatterSeries *> series_vec)
+void append_to_series_vector(auto row_tuple_container,
+                             std::vector<QtCharts::QScatterSeries *> series_vec)
 {
     for( const auto &[pos, r, z, score] : row_tuple_container )
     {
@@ -50,20 +54,21 @@ void append_to_series_vector(auto row_tuple_container, std::vector<QtCharts::QSc
     }
 }
 
-
 InteractiveTrackViewer::InteractiveTrackViewer(QWidget *parent) :
     QMainWindow(parent),
     m_rnd_gen(std::random_device{}()),
     m_chart_view(new QtCharts::QChartView(this)),
     m_chart(m_chart_view->chart())
 {
-    // Layout
-    auto central_layout = new QHBoxLayout(this);
     
+    resize(QDesktopWidget().availableGeometry(this).size() * 0.7);
+    // UI
+    auto central_layout = new QHBoxLayout(this);
+
     m_chart_view->setRenderHint(QPainter::Antialiasing);
+    m_chart_view->setRubberBand(QtCharts::QChartView::RectangleRubberBand);
     central_layout->addWidget(m_chart_view, 3);
 
-    // 
     m_list_widget = new QListWidget(this);
     m_list_widget->setSortingEnabled(true);
     m_list_widget->sortItems(Qt::SortOrder::DescendingOrder);
@@ -72,14 +77,16 @@ InteractiveTrackViewer::InteractiveTrackViewer(QWidget *parent) :
     setCentralWidget(new QWidget(this));
     centralWidget()->setLayout(central_layout);
 
+    statusBar()->showMessage("Nothing loaded yet");
+    
     SPDLOG_DEBUG("Created UI");
 
     // Actions
-    QAction *open_action = new QAction("Open", this);
+    auto open_action = new QAction("Open", this);
     connect(open_action, &QAction::triggered, this,
             &InteractiveTrackViewer::open);
 
-    QAction *sort_action = new QAction("Tracks Sort Order", this);
+    auto sort_action = new QAction("Tracks Sort Order", this);
     connect(
         sort_action, &QAction::triggered, this,
         [&, order = static_cast<bool>(Qt::SortOrder::DescendingOrder)]() mutable
@@ -87,14 +94,26 @@ InteractiveTrackViewer::InteractiveTrackViewer(QWidget *parent) :
             order = !order;
             m_list_widget->sortItems(static_cast<Qt::SortOrder>(order));
         });
+    
+    auto reset_zoom_action = new QAction("Reset zoom", this);
+    connect(reset_zoom_action, &QAction::triggered, m_chart, &QtCharts::QChart::zoomReset);
+    
+    auto select_series_action = new QAction("Select visible points", this);
+    connect(select_series_action, &QAction::triggered, this, [&]()
+    {
+        SeriesSelectDialog dialog(m_chart->series());
+        dialog.exec();
+    });
 
     QToolBar *file_tool_bar = addToolBar("Main Toolbar");
     file_tool_bar->addAction(open_action);
     file_tool_bar->addAction(sort_action);
+    file_tool_bar->addAction(reset_zoom_action);
+    file_tool_bar->addAction(select_series_action);
 
     file_tool_bar->setToolButtonStyle(Qt::ToolButtonTextOnly);
     file_tool_bar->setMovable(false);
-    
+
     // Init current track series
     for( const auto &[name, color] : series_properties )
     {
@@ -103,47 +122,49 @@ InteractiveTrackViewer::InteractiveTrackViewer(QWidget *parent) :
         series->setPen(QPen(QBrush(), 5.));
         series->setBorderColor(Qt::black);
         series->setMarkerSize(20.);
-        
 
         m_current_track.push_back(series);
     }
-    
+
     // Select Track
-    connect(m_list_widget, &QListWidget::itemActivated, this, [&](auto item)
-    {
-        auto item_ptr = dynamic_cast<TrackListWidgetItem *>(item);
-        
-        if( !item_ptr )
-            return;
-        
-        auto &track = item_ptr->track->second;
-        
-        // Remove old series
-        for( auto series : m_current_track )
-        {
-            m_chart->removeSeries(series);
-            series->clear();
-        }
-        
-        
-        // Fill in data
-        append_to_series_vector(track, m_current_track);
-        
-        // Add new series
-        for( auto series : m_current_track )
-        {
-            m_chart->addSeries(series);
-            series->attachAxis(m_chart->axes()[0]);
-            series->attachAxis(m_chart->axes()[1]);
-            m_chart->legend()->markers(series).at(0)->setVisible(false);
-        }
-    });
+    connect(m_list_widget, &QListWidget::itemActivated, this,
+            [&](auto item)
+            {
+                auto item_ptr = dynamic_cast<TrackListWidgetItem *>(item);
+
+                if( !item_ptr )
+                    return;
+                
+                display_track(item_ptr->track->second);
+            });
 }
 
 InteractiveTrackViewer::~InteractiveTrackViewer() {}
 
-void InteractiveTrackViewer::open()
+void InteractiveTrackViewer::display_track(const std::span<RowTuple> &track) 
 {
+    // Remove old series
+    for( auto series : m_current_track )
+    {
+        m_chart->removeSeries(series);
+        series->clear();
+    }
+
+    // Fill in data
+    append_to_series_vector(track, m_current_track);
+
+    // Add new series
+    for( auto series : m_current_track )
+    {
+        m_chart->addSeries(series);
+        series->attachAxis(m_chart->axes()[0]);
+        series->attachAxis(m_chart->axes()[1]);
+        m_chart->legend()->markers(series).at(0)->setVisible(false);
+    }
+}
+
+void InteractiveTrackViewer::open()
+{    
     QString filename = QFileDialog::getOpenFileName(this, "Open the file");
 //     QString filename =
 //         "/home/benjamin/Dokumente/acts_project/ml_navigator/data/models/"
@@ -159,9 +180,18 @@ void InteractiveTrackViewer::open()
                 .c_str());
         return;
     }
+    
+    // Clear everything
+    m_chart->removeAllSeries();
+    
+    for( auto axis : m_chart->axes() )
+        m_chart->removeAxis(axis);
+    
+    m_data.clear();
+    m_tracks.clear();
 
-    setWindowTitle(filename);
-
+    setWindowTitle(fmt::format("Interactive Track Viewer ({})", filename.toStdString()).c_str());
+    
     try
     {
         bool header = true;
@@ -173,10 +203,10 @@ void InteractiveTrackViewer::open()
                 continue;
             }
 
-            int track_pos = std::stoi(row[1]);
-            float r       = std::stof(row[2]);
-            float z       = std::stof(row[3]);
-            int score     = std::stoi(row[4]);
+            auto track_pos = std::stoi(row[1]);
+            auto r       = std::stod(row[2]);
+            auto z       = std::stod(row[3]);
+            auto score     = std::stoi(row[4]);
 
             m_data.push_back({track_pos, r, z, score});
         }
@@ -201,16 +231,19 @@ void InteractiveTrackViewer::open()
         {
             std::span<RowTuple> track(start, next);
             auto mean_score =
-                static_cast<float>(std::accumulate(
+                static_cast<double>(std::accumulate(
                     track.begin(), track.end(), 0,
                     [](auto a, auto b) { return a + std::get<3>(b); })) /
-                static_cast<float>(track.size());
+                static_cast<double>(track.size());
 
             m_tracks.push_back({mean_score, track});
 
             start = next;
         }
     }
+    
+    // Display on status bar
+    statusBar()->showMessage(fmt::format("Loaded {} tracks (in total {} points)", m_tracks.size(), m_data.size()).c_str());
 
     // Add to widget
     for( auto it = m_tracks.cbegin(); it != m_tracks.cend(); ++it )
@@ -220,8 +253,6 @@ void InteractiveTrackViewer::open()
                                   it->second.size(), it->first)
                           .c_str());
     }
-
-    SPDLOG_DEBUG("Found {} tracks", m_tracks.size());
 
     // Create background data
     auto background_data = m_data;
@@ -239,9 +270,35 @@ void InteractiveTrackViewer::open()
         series->setBorderColor(Qt::transparent);
         series->setMarkerSize(10.);
 
+        connect(series, &QtCharts::QXYSeries::clicked, this,
+                [&](auto point)
+                {
+                    auto found = std::ranges::find_if(
+                        m_data,
+                        [&](auto a)
+                        {
+                            return std::get<2>(a) == point.x() &&
+                                   std::get<1>(a) == point.y();
+                        });
+                    
+                    if( found == m_data.end() )
+                        return;
+
+                    for(const auto &[score, track] : m_tracks)
+                    {
+                        auto found_ptr = &*found;
+                        
+                        if( found_ptr >= &*track.begin() && found_ptr < &*track.end() )
+                        {
+                            display_track(track);
+                            return;
+                        }
+                    }
+                });
+
         series_vec.push_back(series);
     }
-    
+
     append_to_series_vector(background_data, series_vec);
 
     SPDLOG_DEBUG("Created Series");
@@ -262,8 +319,8 @@ void InteractiveTrackViewer::open()
 
     SPDLOG_DEBUG("max r: {}, max z: {}", max_r, max_z);
 
-    max_r *= 1.1f;
-    max_z *= 1.1f;
+    max_r *= 1.1;
+    max_z *= 1.1;
 
     m_chart->createDefaultAxes();
     m_chart->axes()[0]->setRange(-max_z, max_z);

@@ -93,6 +93,7 @@ if __name__ == "__main__":
     parser.add_argument("--model_dir",type=str)
     parser.add_argument("--bpsplit_z",type=int)
     parser.add_argument("--bpsplit_phi",type=int)
+    parser.add_argument("--detector",type=str)
     
     options = vars(parser.parse_args())
     
@@ -100,11 +101,15 @@ if __name__ == "__main__":
         logging.error("Must specify path to model")
         exit()
         
+    if options['detector'] == None:
+        logging.error("Must specify either 'generic' or 'itk'")
+        exit()
+        
     if options['bpsplit_z'] == None or options['bpsplit_phi'] == None:
         logging.error("Must specify --bpsplit_z and --bpsplit_phi")
         exit()
         
-    detector_file = os.path.join(get_root_dir(), "detector/detector_surfaces.csv")
+    detector_file = os.path.join(get_root_dir(), "detectors", options['detector'], "detector_surfaces.csv")
     assert os.path.exists(detector_file)
     assert os.path.exists(options['model_dir'])
     

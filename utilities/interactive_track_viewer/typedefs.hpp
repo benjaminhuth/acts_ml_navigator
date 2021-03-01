@@ -2,4 +2,4 @@
 
 #include <tuple>
 
-using RowTuple = std::tuple<int,float,float,int>;
+using RowTuple = std::tuple<int,double,double,int>;
